@@ -307,8 +307,9 @@ func NewApp(
 	mh := &handler.Mounts{Manager: mounts}
 	lh := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
 	plh := &handler.Playlists{Manager: playlists}
-	djh := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
-	yth := &handler.YTImport{Manager: ytm}
+	djh  := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
+	whep := &handler.WHEP{Manager: djm.WebRTC}
+	yth  := &handler.YTImport{Manager: ytm}
 
 	api.Get("/status", handler.Status)
 
@@ -333,6 +334,16 @@ func NewApp(
 	api.Post("/mounts/:name/autodj/skip", djh.Skip)
 	api.Get("/mounts/:name/nowplaying", djh.NowPlaying)
 	api.Get("/autodj/sessions", djh.Sessions)
+
+	// WHEP: WebRTC HTTP Egress — POST SDP offer, receive SDP answer.
+	// No auth required (same as HLS segments — public stream).
+	app.Post("/whep/:name", whep.Offer)
+	app.Options("/whep/:name", func(c *fiber.Ctx) error {
+		c.Set("Access-Control-Allow-Origin", "*")
+		c.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		c.Set("Access-Control-Allow-Headers", "Content-Type")
+		return c.SendStatus(fiber.StatusNoContent)
+	})
 
 	api.Get("/library", lh.List)
 	api.Post("/library/scan", lh.Scan)

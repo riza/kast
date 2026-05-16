@@ -43,9 +43,13 @@ func (s *Segmenter) MountDir(mountName string) string {
 // low_latency HLS flag so that partial segments (parts) are flushed to
 // disk as they are encoded — required for LL-HLS blocking playlist reload.
 //
+// When rtpPort > 0 a second output is added: Opus RTP sent to
+// 127.0.0.1:{rtpPort}, used by the WebRTC WHEP server. Pass 0 to
+// disable the RTP output (e.g. when WebRTC is not configured).
+//
 // The caller is responsible for piping audio data into cmd.Stdin and
 // for calling cmd.Wait() after the pipeline ends.
-func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool) (*exec.Cmd, error) {
+func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool, rtpPort int) (*exec.Cmd, error) {
 	dir := s.MountDir(mountName)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("hls: mkdir %q: %w", dir, err)
@@ -53,22 +57,22 @@ func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool
 
 	playlist := filepath.Join(dir, "index.m3u8")
 
-	var cmd *exec.Cmd
+	// Base args: input from stdin.
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-f", "aac",
+		"-i", "pipe:0",
+	}
+
+	// HLS output (always present).
 	if llhls {
 		segPattern := filepath.Join(dir, "seg%05d.m4s")
-		// #nosec G204
-		cmd = exec.CommandContext(ctx,
-			"ffmpeg",
-			"-hide_banner",
-			"-loglevel", "error",
-			// Input: ADTS AAC stream from pipe
-			"-f", "aac",
-			"-i", "pipe:0",
-			// Output codec
+		args = append(args,
+			"-map", "0:a",
 			"-c:a", "aac",
 			"-b:a", "128k",
 			"-ar", "44100",
-			// fMP4 HLS muxer — LL-HLS mode
 			"-f", "hls",
 			"-hls_time", strconv.Itoa(s.segmentDuration),
 			"-hls_list_size", strconv.Itoa(s.playlistSize),
@@ -80,13 +84,8 @@ func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool
 		)
 	} else {
 		segPattern := filepath.Join(dir, "seg%05d.ts")
-		// #nosec G204
-		cmd = exec.CommandContext(ctx,
-			"ffmpeg",
-			"-hide_banner",
-			"-loglevel", "error",
-			"-f", "aac",
-			"-i", "pipe:0",
+		args = append(args,
+			"-map", "0:a",
 			"-c:a", "aac",
 			"-b:a", "128k",
 			"-ar", "44100",
@@ -98,9 +97,28 @@ func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool
 			playlist,
 		)
 	}
+
+	// Optional WebRTC/WHEP RTP output (Opus, 48 kHz stereo, payload type 111).
+	if rtpPort > 0 {
+		rtpURL := fmt.Sprintf("rtp://127.0.0.1:%d", rtpPort)
+		args = append(args,
+			"-map", "0:a",
+			"-c:a", "libopus",
+			"-b:a", "96k",
+			"-ar", "48000",
+			"-ac", "2",
+			"-application", "lowdelay",
+			"-payload_type", "111",
+			"-f", "rtp",
+			rtpURL,
+		)
+	}
+
+	// #nosec G204
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stderr = os.Stderr
 
-	slog.Info("hls: starting segmenter", "mount", mountName, "ll_hls", llhls, "dir", dir)
+	slog.Info("hls: starting segmenter", "mount", mountName, "ll_hls", llhls, "rtp_port", rtpPort, "dir", dir)
 	return cmd, nil
 }
 

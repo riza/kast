@@ -15,6 +15,7 @@ import (
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
 	"github.com/riza/kast/internal/mount"
+	"github.com/riza/kast/internal/webrtcmanager"
 )
 
 // session holds all resources for one active AutoDJ mount.
@@ -41,6 +42,7 @@ type Manager struct {
 	segmenter *hls.Segmenter
 	mounts    *mount.Manager
 	Trackers  *hls.TrackerRegistry
+	WebRTC    *webrtcmanager.Manager
 }
 
 // NewManager returns a Manager wired to the given segmenter and mount manager.
@@ -51,6 +53,7 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager) *Manager {
 		Trackers:  hls.NewTrackerRegistry(),
 		segmenter: segmenter,
 		mounts:    mounts,
+		WebRTC:    webrtcmanager.New(),
 	}
 }
 
@@ -91,8 +94,17 @@ func (m *Manager) Start(
 		llhls = mt.Protocol == "LL-HLS"
 	}
 
-	// Start the HLS ffmpeg process.
-	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName, llhls)
+	// Allocate a UDP port for WebRTC RTP input. Failures are non-fatal: HLS
+	// still works without WebRTC.
+	rtpPort, err := m.WebRTC.AllocatePort(mountName)
+	if err != nil {
+		slog.Warn("djmanager: webrtc rtp allocation failed, continuing without webrtc",
+			"mount", mountName, "err", err)
+		rtpPort = 0
+	}
+
+	// Start the HLS ffmpeg process (with optional RTP output for WebRTC).
+	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName, llhls, rtpPort)
 	if err != nil {
 		cancel()
 		pipeR.Close()
@@ -175,6 +187,7 @@ func (m *Manager) Stop(mountName string) error {
 	sess.pipeW.Close()
 	delete(m.sessions, mountName)
 	m.Trackers.Stop(m.segmenter.MountDir(mountName))
+	m.WebRTC.StopMount(mountName)
 	m.mounts.SetStatus(mountName, mount.StatusIdle)
 	slog.Info("djmanager: stopped", "mount", mountName)
 	return nil
@@ -245,6 +258,7 @@ func (m *Manager) StopAll() {
 		m.Trackers.Stop(m.segmenter.MountDir(name))
 		slog.Info("djmanager: stopped on shutdown", "mount", name)
 	}
+	m.WebRTC.StopAll()
 }
 
 // pushHistory prepends t to the history for mountName (max 10 entries).
