@@ -1,9 +1,8 @@
 import type { Metadata } from "next"
-import { Geist_Mono, IBM_Plex_Sans } from "next/font/google"
+import { Inter, JetBrains_Mono } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { ColorThemeProvider } from "@/components/color-theme-provider"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Toaster } from "sonner"
 import { cn } from "@/lib/utils"
@@ -16,12 +15,12 @@ export const metadata: Metadata = {
   description: "Kast — Open-source LL-HLS / WebRTC / SRT streaming server",
 }
 
-const ibmPlexSans = IBM_Plex_Sans({
+const inter = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
 })
 
-const fontMono = Geist_Mono({
+const jetBrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
@@ -34,29 +33,15 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      className={cn("dark antialiased", inter.variable, jetBrainsMono.variable)}
       suppressHydrationWarning
-      className={cn(
-        "antialiased",
-        fontMono.variable,
-        "font-sans",
-        ibmPlexSans.variable
-      )}
     >
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("dashacdn-color-theme");if(t&&t!=="stone"){document.documentElement.setAttribute("data-color-theme",t)}}catch(e){}})()`,
-          }}
-        />
-      </head>
       <body>
-        <ThemeProvider>
-          <ColorThemeProvider>
-            <TooltipProvider>
-              {children}
-            </TooltipProvider>
-            <Toaster richColors position="top-right" />
-          </ColorThemeProvider>
+        <ThemeProvider forcedTheme="dark" disableTransitionOnChange>
+          <TooltipProvider>
+            {children}
+          </TooltipProvider>
+          <Toaster richColors position="top-right" />
         </ThemeProvider>
       </body>
     </html>

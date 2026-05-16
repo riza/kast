@@ -193,6 +193,7 @@ export type CreateMountBody = {
   source_password: string
   bitrate?:        string
   codec?:          string
+  protocol?:       string
 }
 
 export type CreatePlaylistBody = {
@@ -212,8 +213,9 @@ export type UpdatePlaylistBody = {
 }
 
 export type StartAutoDJBody = {
-  playlist_id: string
-  mode?:       string
+  playlist_id:       string
+  mode?:             string
+  start_track_path?: string
 }
 
 export type APIAutoDJSession = {

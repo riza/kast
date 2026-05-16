@@ -126,6 +126,7 @@ type CreateRequest struct {
 	SourcePassword string `json:"source_password"`
 	Bitrate        string `json:"bitrate"`
 	Codec          string `json:"codec"`
+	Protocol       string `json:"protocol"` // "HLS" (default) | "LL-HLS"
 }
 
 // Create adds a new mount.
@@ -152,6 +153,10 @@ func (m *Manager) Create(req CreateRequest) (*Mount, error) {
 	if bitrate == "" {
 		bitrate = "128k"
 	}
+	protocol := strings.ToUpper(req.Protocol)
+	if protocol != "LL-HLS" {
+		protocol = "HLS"
+	}
 
 	mt := &Mount{
 		ID:             newID(),
@@ -160,7 +165,7 @@ func (m *Manager) Create(req CreateRequest) (*Mount, error) {
 		Genre:          req.Genre,
 		Website:        req.Website,
 		SourcePassword: req.SourcePassword,
-		Protocol:       "HLS",
+		Protocol:       protocol,
 		Codec:          codec,
 		Bitrate:        bitrate,
 		Status:         StatusIdle,

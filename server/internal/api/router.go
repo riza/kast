@@ -2,9 +2,11 @@
 package api
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,7 +86,7 @@ func NewApp(
 	app.Use(middleware.CORS(cfg.Server.CORSOrigins))
 
 	// ── HLS streaming — unauthenticated, high-volume ─────────────────────────
-	tracker := newListenerTracker(30 * time.Second)
+	listenerTrack := newListenerTracker(30 * time.Second)
 	app.Get("/hls/:mount/*", limiter.New(limiter.Config{
 		Max:        300,
 		Expiration: time.Minute,
@@ -98,17 +100,43 @@ func NewApp(
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		count := tracker.touch("/"+mountName, ip)
+		count := listenerTrack.touch("/"+mountName, ip)
 		mounts.SetListeners("/"+mountName, count)
 
 		dir := segmenter.MountDir(mountName)
 		filePath := c.Params("*")
 		fullPath := filepath.Join(dir, filepath.Clean("/"+filePath))
 
+		// ── LL-HLS blocking playlist reload ─────────────────────────────────
+		// When a client sends ?_HLS_msn=X&_HLS_part=Y we must hold the request
+		// open until that part has been written to disk, then serve the playlist.
+		if filePath == "index.m3u8" {
+			msnStr := c.Query("_HLS_msn")
+			partStr := c.Query("_HLS_part")
+			if msnStr != "" && partStr != "" {
+				t := djm.Trackers.Get(dir)
+				if t != nil {
+					wantMSN, errMSN := parseInt(msnStr)
+					wantPart, errPart := parseInt(partStr)
+					if errMSN == nil && errPart == nil {
+						t.WaitFor(wantMSN, wantPart)
+					}
+				}
+			}
+		}
+
 		if _, err := os.Stat(fullPath); err != nil {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
 		c.Set("Cache-Control", "no-cache")
+
+		// Inject LL-HLS server control header into playlist responses.
+		if filePath == "index.m3u8" {
+			if mt, err := mounts.Get("/" + mountName); err == nil && mt.Protocol == "LL-HLS" {
+				return servePlaylistWithLLHeaders(c, fullPath)
+			}
+		}
+
 		return c.SendFile(fullPath, false)
 	})
 
@@ -330,4 +358,41 @@ func extractBearer(c *fiber.Ctx) string {
 		return v[7:]
 	}
 	return ""
+}
+
+func parseInt(s string) (int, error) {
+	n := 0
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf("not a number")
+		}
+		n = n*10 + int(ch-'0')
+	}
+	return n, nil
+}
+
+// servePlaylistWithLLHeaders reads an HLS playlist file, injects the
+// EXT-X-SERVER-CONTROL tag required for LL-HLS blocking reload (if not
+// already present), and writes the result to the response.
+func servePlaylistWithLLHeaders(c *fiber.Ctx, path string) error {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
+
+	const serverControl = "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.6\n"
+	body := string(data)
+
+	if !contains(body, "#EXT-X-SERVER-CONTROL") {
+		// Insert after the #EXTM3U line.
+		body = strings.Replace(body, "#EXTM3U\n", "#EXTM3U\n"+serverControl, 1)
+	}
+
+	c.Set("Content-Type", "application/vnd.apple.mpegurl")
+	c.Set("Cache-Control", "no-cache")
+	return c.SendString(body)
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

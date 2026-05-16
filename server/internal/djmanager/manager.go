@@ -40,6 +40,7 @@ type Manager struct {
 	history   map[string][]*library.Track // key = mount name, max 10 entries newest-first
 	segmenter *hls.Segmenter
 	mounts    *mount.Manager
+	Trackers  *hls.TrackerRegistry
 }
 
 // NewManager returns a Manager wired to the given segmenter and mount manager.
@@ -47,6 +48,7 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager) *Manager {
 	return &Manager{
 		sessions:  make(map[string]*session),
 		history:   make(map[string][]*library.Track),
+		Trackers:  hls.NewTrackerRegistry(),
 		segmenter: segmenter,
 		mounts:    mounts,
 	}
@@ -83,8 +85,14 @@ func (m *Manager) Start(
 	// Pipe: AutoDJ → ffmpeg stdin (HLS segmenter).
 	pipeR, pipeW := io.Pipe()
 
+	// Determine protocol from mount config.
+	llhls := false
+	if mt, err := m.mounts.Get(mountName); err == nil {
+		llhls = mt.Protocol == "LL-HLS"
+	}
+
 	// Start the HLS ffmpeg process.
-	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName)
+	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName, llhls)
 	if err != nil {
 		cancel()
 		pipeR.Close()
@@ -97,6 +105,14 @@ func (m *Manager) Start(
 		pipeR.Close()
 		pipeW.Close()
 		return fmt.Errorf("djmanager: start ffmpeg for %s: %w", mountName, err)
+	}
+
+	// For LL-HLS mounts, start watching the output directory for new parts.
+	if llhls {
+		dir := m.segmenter.MountDir(mountName)
+		if _, err := m.Trackers.Start(dir); err != nil {
+			slog.Warn("djmanager: could not start ll-hls tracker", "mount", mountName, "err", err)
+		}
 	}
 
 	// Wrap onTrackChange so it records history and calls the external callback.
@@ -158,6 +174,7 @@ func (m *Manager) Stop(mountName string) error {
 	sess.cancel()
 	sess.pipeW.Close()
 	delete(m.sessions, mountName)
+	m.Trackers.Stop(m.segmenter.MountDir(mountName))
 	m.mounts.SetStatus(mountName, mount.StatusIdle)
 	slog.Info("djmanager: stopped", "mount", mountName)
 	return nil
@@ -225,6 +242,7 @@ func (m *Manager) StopAll() {
 		sess.cancel()
 		sess.pipeW.Close()
 		delete(m.sessions, name)
+		m.Trackers.Stop(m.segmenter.MountDir(name))
 		slog.Info("djmanager: stopped on shutdown", "mount", name)
 	}
 }

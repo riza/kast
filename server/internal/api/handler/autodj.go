@@ -21,8 +21,9 @@ type AutoDJ struct {
 }
 
 type startAutoDJRequest struct {
-	PlaylistID string `json:"playlist_id"`
-	Mode       string `json:"mode"`
+	PlaylistID      string `json:"playlist_id"`
+	Mode            string `json:"mode"`
+	StartTrackPath  string `json:"start_track_path"`
 }
 
 // Start godoc: POST /api/mounts/:name/autodj
@@ -77,7 +78,11 @@ func (h *AutoDJ) Start(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := h.DJManager.Start(context.Background(), mountName, req.PlaylistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+	startFrom := req.StartTrackPath
+	if startFrom == "" {
+		startFrom = pl.LastPlayedPath
+	}
+	if err := h.DJManager.Start(context.Background(), mountName, req.PlaylistID, startFrom, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
 		return respond.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
 
