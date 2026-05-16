@@ -1,0 +1,263 @@
+// Package djmanager manages AutoDJ playback sessions per mount.
+// Each active session consists of an autodj.Player writing PCM audio through
+// an io.Pipe into an ffmpeg HLS segmenter process.
+package djmanager
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os/exec"
+	"sync"
+
+	"github.com/riza/kast/internal/autodj"
+	"github.com/riza/kast/internal/hls"
+	"github.com/riza/kast/internal/library"
+	"github.com/riza/kast/internal/mount"
+)
+
+// session holds all resources for one active AutoDJ mount.
+type session struct {
+	player     *autodj.Player
+	cmd        *exec.Cmd
+	pipeW      *io.PipeWriter
+	cancel     context.CancelFunc
+	ctx        context.Context // for checking intentional cancel
+	playlistID string
+}
+
+// SessionInfo is a read-only snapshot of a running AutoDJ session.
+type SessionInfo struct {
+	Mount      string `json:"mount"`
+	PlaylistID string `json:"playlist_id"`
+}
+
+// Manager maintains one session per mount name.
+type Manager struct {
+	mu        sync.Mutex
+	sessions  map[string]*session // key = "/radio1" etc.
+	history   map[string][]*library.Track // key = mount name, max 10 entries newest-first
+	segmenter *hls.Segmenter
+	mounts    *mount.Manager
+}
+
+// NewManager returns a Manager wired to the given segmenter and mount manager.
+func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager) *Manager {
+	return &Manager{
+		sessions:  make(map[string]*session),
+		history:   make(map[string][]*library.Track),
+		segmenter: segmenter,
+		mounts:    mounts,
+	}
+}
+
+// Start begins AutoDJ playback on mountName.
+// Any existing session for that mount is stopped first.
+// tracks must be non-empty (caller should validate before calling).
+// startFromPath resumes playback from the track after the given path (empty = from beginning).
+// onTrackChange, if non-nil, is called each time a new track starts playing.
+func (m *Manager) Start(
+	ctx context.Context,
+	mountName string,
+	playlistID string,
+	startFromPath string,
+	onTrackChange func(path string),
+	tracks []*library.Track,
+	mode autodj.Mode,
+	crossfadeMs int,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Stop any existing session for this mount.
+	if old, ok := m.sessions[mountName]; ok {
+		old.player.Stop()
+		old.cancel()
+		old.pipeW.Close() // safe to call after player.Stop(); second close is a no-op
+		delete(m.sessions, mountName)
+	}
+
+	sessCtx, cancel := context.WithCancel(ctx)
+
+	// Pipe: AutoDJ → ffmpeg stdin (HLS segmenter).
+	pipeR, pipeW := io.Pipe()
+
+	// Start the HLS ffmpeg process.
+	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName)
+	if err != nil {
+		cancel()
+		pipeR.Close()
+		pipeW.Close()
+		return fmt.Errorf("djmanager: start segmenter for %s: %w", mountName, err)
+	}
+	hlsCmd.Stdin = pipeR
+	if err := hlsCmd.Start(); err != nil {
+		cancel()
+		pipeR.Close()
+		pipeW.Close()
+		return fmt.Errorf("djmanager: start ffmpeg for %s: %w", mountName, err)
+	}
+
+	// Wrap onTrackChange so it records history and calls the external callback.
+	trackCb := func(t *library.Track) {
+		m.pushHistory(mountName, t)
+		if onTrackChange != nil {
+			onTrackChange(t.Path)
+		}
+	}
+
+	// Start the AutoDJ player in a background goroutine.
+	player := autodj.NewPlayer(tracks, mode, crossfadeMs, startFromPath, trackCb)
+	player.Start(sessCtx, pipeW) // goroutine; closes pipeW when done
+
+	sess := &session{
+		player:     player,
+		cmd:        hlsCmd,
+		pipeW:      pipeW,
+		cancel:     cancel,
+		ctx:        sessCtx,
+		playlistID: playlistID,
+	}
+	m.sessions[mountName] = sess
+	m.mounts.SetStatus(mountName, mount.StatusLive)
+
+	// Background: wait for ffmpeg to exit and clean up.
+	go func() {
+		if err := hlsCmd.Wait(); err != nil {
+			// Only log as error if context was not intentionally cancelled.
+			if sessCtx.Err() == nil {
+				slog.Error("djmanager: hls ffmpeg crashed",
+					"mount", mountName, "err", err)
+				m.mounts.SetStatus(mountName, mount.StatusError)
+			}
+		} else {
+			m.mounts.SetStatus(mountName, mount.StatusIdle)
+		}
+		m.mu.Lock()
+		// Only remove if this is still our session (a new Start may have replaced it).
+		if cur, ok := m.sessions[mountName]; ok && cur == sess {
+			delete(m.sessions, mountName)
+		}
+		m.mu.Unlock()
+	}()
+
+	slog.Info("djmanager: started", "mount", mountName, "tracks", len(tracks), "mode", mode)
+	return nil
+}
+
+// Stop halts the AutoDJ session for mountName.
+func (m *Manager) Stop(mountName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[mountName]
+	if !ok {
+		return fmt.Errorf("djmanager: no active session for %s", mountName)
+	}
+	sess.player.Stop()
+	sess.cancel()
+	sess.pipeW.Close()
+	delete(m.sessions, mountName)
+	m.mounts.SetStatus(mountName, mount.StatusIdle)
+	slog.Info("djmanager: stopped", "mount", mountName)
+	return nil
+}
+
+// NowPlaying returns the track currently playing on mountName, or nil if idle.
+func (m *Manager) NowPlaying(mountName string) *library.Track {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[mountName]
+	if !ok {
+		return nil
+	}
+	return sess.player.NowPlaying()
+}
+
+// Skip advances the current track immediately on mountName.
+func (m *Manager) Skip(mountName string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[mountName]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("djmanager: no active session for %s", mountName)
+	}
+	sess.player.Skip()
+	return nil
+}
+
+// IsRunning reports whether mountName has an active AutoDJ session.
+func (m *Manager) IsRunning(mountName string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.sessions[mountName]
+	return ok
+}
+
+// GetSession returns the session info for mountName, or nil if not running.
+func (m *Manager) GetSession(mountName string) *SessionInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[mountName]
+	if !ok {
+		return nil
+	}
+	return &SessionInfo{Mount: mountName, PlaylistID: sess.playlistID}
+}
+
+// ListSessions returns info for all active AutoDJ sessions.
+func (m *Manager) ListSessions() []*SessionInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*SessionInfo, 0, len(m.sessions))
+	for mountName, sess := range m.sessions {
+		out = append(out, &SessionInfo{Mount: mountName, PlaylistID: sess.playlistID})
+	}
+	return out
+}
+
+// StopAll halts every active session. Call during graceful shutdown.
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for name, sess := range m.sessions {
+		sess.player.Stop()
+		sess.cancel()
+		sess.pipeW.Close()
+		delete(m.sessions, name)
+		slog.Info("djmanager: stopped on shutdown", "mount", name)
+	}
+}
+
+// pushHistory prepends t to the history for mountName (max 10 entries).
+// Caller must NOT hold m.mu; this method acquires it.
+func (m *Manager) pushHistory(mountName string, t *library.Track) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prev := m.history[mountName]
+	// Avoid duplicate consecutive entries.
+	if len(prev) > 0 && prev[0].ID == t.ID {
+		return
+	}
+	updated := make([]*library.Track, 0, 11)
+	updated = append(updated, t)
+	updated = append(updated, prev...)
+	if len(updated) > 10 {
+		updated = updated[:10]
+	}
+	m.history[mountName] = updated
+}
+
+// RecentTracks returns a snapshot of the last 10 tracks played on mountName
+// (newest first). Returns nil if there is no history.
+func (m *Manager) RecentTracks(mountName string) []*library.Track {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h := m.history[mountName]
+	if len(h) == 0 {
+		return nil
+	}
+	out := make([]*library.Track, len(h))
+	copy(out, h)
+	return out
+}

@@ -1,0 +1,216 @@
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"golang.org/x/crypto/acme/autocert"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/riza/kast/internal/api"
+	"github.com/riza/kast/internal/config"
+	"github.com/riza/kast/internal/djmanager"
+	"github.com/riza/kast/internal/hls"
+	"github.com/riza/kast/internal/library"
+	"github.com/riza/kast/internal/mount"
+	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/source"
+	"github.com/riza/kast/internal/ytimport"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "kast: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfgPath := flag.String("config", "kast.toml", "path to TOML configuration file")
+	flag.Parse()
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+
+	setupLogger(cfg.Log.Level, cfg.Log.Format)
+	slog.Info("kast starting", "version", "0.1.0")
+
+	// ── Storage directories ──────────────────────────────────────────────────
+	dataDir := "./data"
+
+	// ── Core services ────────────────────────────────────────────────────────
+	mounts, err := mount.NewManager(filepath.Join(dataDir, "mounts"))
+	if err != nil {
+		return fmt.Errorf("mount manager: %w", err)
+	}
+
+	scanner, err := library.NewScanner(
+		cfg.Library.ScanDirs,
+		cfg.Library.AudioExtensions,
+		filepath.Join(dataDir, "library"),
+	)
+	if err != nil {
+		return fmt.Errorf("library scanner: %w", err)
+	}
+
+	segmenter, err := hls.NewSegmenter(
+		cfg.HLS.OutputDir,
+		cfg.HLS.SegmentDuration,
+		cfg.HLS.PlaylistSize,
+	)
+	if err != nil {
+		return fmt.Errorf("hls segmenter: %w", err)
+	}
+
+	src := source.NewHandler()
+
+	playlists, err := playlist.NewManager(filepath.Join(dataDir, "playlists"))
+	if err != nil {
+		return fmt.Errorf("playlist manager: %w", err)
+	}
+
+	djm := djmanager.NewManager(segmenter, mounts)
+
+	importDir := "./data/music"
+	if len(cfg.Library.ScanDirs) > 0 {
+		importDir = cfg.Library.ScanDirs[0]
+	}
+	ytm := ytimport.NewManager(importDir, scanner)
+
+	// ── Fiber app ────────────────────────────────────────────────────────────
+	app := api.NewApp(cfg, mounts, scanner, segmenter, src, playlists, djm, ytm)
+
+	// ── Initial library scan (background) ────────────────────────────────────
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := scanner.Scan(ctx); err != nil {
+			slog.Error("initial library scan", "err", err)
+		}
+	}()
+
+	// ── Start servers ────────────────────────────────────────────────────────
+	errCh := make(chan error, 2)
+
+	if cfg.SSL.Enabled {
+		// HTTPS is the primary listener; HTTP redirects to HTTPS.
+		go func() {
+			if err := startTLS(app, cfg); err != nil {
+				errCh <- fmt.Errorf("tls: %w", err)
+			}
+		}()
+		go startHTTPRedirect(cfg.Server.HTTPAddr, cfg.SSL.Domains)
+	} else {
+		go func() {
+			slog.Info("http server listening", "addr", cfg.Server.HTTPAddr)
+			if err := app.Listen(cfg.Server.HTTPAddr); err != nil {
+				errCh <- fmt.Errorf("http: %w", err)
+			}
+		}()
+	}
+
+	// ── Graceful shutdown ────────────────────────────────────────────────────
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		slog.Info("shutting down", "signal", sig)
+	case err := <-errCh:
+		return err
+	}
+
+	if err := app.ShutdownWithTimeout(30 * time.Second); err != nil {
+		slog.Error("shutdown error", "err", err)
+	}
+	djm.StopAll()
+	slog.Info("kast stopped")
+	return nil
+}
+
+// startTLS starts the HTTPS listener with either auto-cert (Let's Encrypt) or
+// manual certificate files.
+func startTLS(app *fiber.App, cfg *config.Config) error {
+	if cfg.SSL.AutoCert {
+		return startAutoCert(app, cfg)
+	}
+	slog.Info("https server listening", "addr", cfg.SSL.HTTPAddr, "cert", cfg.SSL.CertFile)
+	return app.ListenTLS(cfg.SSL.HTTPAddr, cfg.SSL.CertFile, cfg.SSL.KeyFile)
+}
+
+// startAutoCert configures Let's Encrypt automatic certificate management.
+func startAutoCert(app *fiber.App, cfg *config.Config) error {
+	if err := os.MkdirAll(cfg.SSL.CertDir, 0o700); err != nil {
+		return fmt.Errorf("create cert dir: %w", err)
+	}
+
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(cfg.SSL.Domains...),
+		Cache:      autocert.DirCache(cfg.SSL.CertDir),
+	}
+
+	tlsCfg := &tls.Config{
+		GetCertificate: m.GetCertificate,
+		NextProtos:     []string{"h2", "http/1.1", "acme-tls/1"},
+		MinVersion:     tls.VersionTLS12,
+	}
+
+	ln, err := tls.Listen("tcp", cfg.SSL.HTTPAddr, tlsCfg)
+	if err != nil {
+		return fmt.Errorf("tls listen: %w", err)
+	}
+
+	slog.Info("https server listening (auto-cert)",
+		"addr", cfg.SSL.HTTPAddr,
+		"domains", cfg.SSL.Domains,
+	)
+
+	return app.Listener(ln)
+}
+
+// startHTTPRedirect starts a minimal Fiber app that redirects all HTTP traffic
+// to HTTPS. It also handles ACME HTTP-01 challenges via autocert.
+func startHTTPRedirect(addr string, domains []string) {
+	redirect := fiber.New(fiber.Config{DisableStartupMessage: true})
+	redirect.All("/*", func(c *fiber.Ctx) error {
+		host := c.Hostname()
+		return c.Redirect("https://"+host+c.OriginalURL(), fiber.StatusMovedPermanently)
+	})
+	slog.Info("http→https redirect listening", "addr", addr)
+	if err := redirect.Listen(addr); err != nil {
+		slog.Error("http redirect server failed", "err", err)
+	}
+}
+
+func setupLogger(level, format string) {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
+	var h slog.Handler
+	if format == "json" {
+		h = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(h))
+}

@@ -1,0 +1,46 @@
+# Kast streaming server — example configuration
+# Copy to kast.toml and edit before running.
+
+[server]
+# Address for the main HTTP server (listeners + API)
+http_addr  = ":8080"
+# Set to a valid cert/key path to enable HTTPS. Leave empty to disable.
+tls_addr   = ""
+tls_cert   = ""
+tls_key    = ""
+# Publicly reachable base URL (used in generated m3u8 URLs)
+public_url = "http://localhost:8080"
+# Origins allowed for CORS. Dashboard dev server should be listed here.
+# Empty list blocks all cross-origin requests.
+cors_origins = ["http://localhost:3000"]
+
+[admin]
+# API key required for all /api/* requests.
+# Generate with: openssl rand -hex 32
+api_key = "CHANGE_ME_BEFORE_PRODUCTION"
+
+[hls]
+# Length of each HLS segment in seconds (4-10 recommended)
+segment_duration = 6
+# How many segments to keep in the playlist
+playlist_size    = 5
+# Directory where HLS segments are written (must be writable)
+output_dir       = "./data/hls"
+
+[library]
+# Directories scanned for audio files
+scan_dirs = ["./data/music"]
+# File extensions treated as audio
+audio_extensions = [".mp3", ".flac", ".aac", ".ogg", ".wav", ".opus", ".m4a"]
+
+[autodj]
+# Default playback mode: "sequential" or "shuffle"
+default_mode = "sequential"
+# Crossfade duration between tracks in milliseconds (0 = disabled)
+crossfade_ms = 2000
+
+[log]
+# debug | info | warn | error
+level  = "info"
+# text | json
+format = "text"

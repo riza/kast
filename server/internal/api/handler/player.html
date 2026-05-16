@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kast — Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+          serif: ['"Instrument Serif"', 'serif'],
+        },
+        borderRadius: { none: '0', DEFAULT: '0', sm:'0', md:'0', lg:'0', xl:'0', '2xl':'0', '3xl':'0' },
+      },
+    },
+    corePlugins: { preflight: true },
+  };
+</script>
+<style>
+  :root {
+    --accent: #E85D2F;
+    --accent-soft: rgba(232,93,47,0.16);
+    --bg: #0E0D0B;
+    --bg-2: #161412;
+    --fg: #F4EFE7;
+    --fg-2: #A8A299;
+    --fg-3: #6B6660;
+    --line: rgba(255,255,255,0.08);
+    --card: rgba(255,255,255,0.03);
+  }
+  html[data-theme="light"] {
+    --bg: #F4EFE7;
+    --bg-2: #E8E2D6;
+    --fg: #14110D;
+    --fg-2: #5A554D;
+    --fg-3: #8C8780;
+    --line: rgba(0,0,0,0.08);
+    --card: rgba(0,0,0,0.025);
+  }
+  html, body { background: var(--bg); color: var(--fg); }
+  body { font-family: '"IBM Plex Sans"', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  *:focus { outline: none; }
+
+  .scroll-soft::-webkit-scrollbar { width: 8px; }
+  .scroll-soft::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.25); }
+
+  @keyframes live-pulse { 0%,100% { opacity:1; transform: scale(1);} 50% { opacity:.45; transform: scale(.85);} }
+  .live-dot { animation: live-pulse 1.4s ease-in-out infinite; }
+
+  @keyframes eq-1 { 0%,100% { height: 30%; } 50% { height: 100%; } }
+  @keyframes eq-2 { 0%,100% { height: 80%; } 50% { height: 25%; } }
+  @keyframes eq-3 { 0%,100% { height: 50%; } 50% { height: 95%; } }
+  @keyframes eq-4 { 0%,100% { height: 95%; } 50% { height: 40%; } }
+  @keyframes eq-5 { 0%,100% { height: 40%; } 50% { height: 85%; } }
+  .eq-bar { animation-duration: 0.9s; animation-iteration-count: infinite; animation-timing-function: ease-in-out; }
+  .eq-paused { animation-play-state: paused !important; height: 20% !important; }
+
+  @keyframes spin-slow { from { transform: rotate(0); } to { transform: rotate(360deg);} }
+  .vinyl-spin { animation: spin-slow 18s linear infinite; }
+  .vinyl-paused { animation-play-state: paused; }
+
+  @keyframes toast-in { from { transform: translateY(8px); opacity:0;} to { transform: translateY(0); opacity:1;} }
+  .toast { animation: toast-in 200ms ease-out both; }
+
+  .ambient {
+    position: fixed; inset: -20%;
+    background: radial-gradient(60% 50% at 30% 30%, var(--ambient-1, var(--accent)) 0%, transparent 60%),
+                radial-gradient(60% 50% at 70% 70%, var(--ambient-2, var(--accent)) 0%, transparent 65%);
+    filter: blur(80px); opacity: 0.45;
+    z-index: 0; pointer-events: none;
+    transition: background 800ms ease, opacity 600ms ease;
+  }
+  html[data-theme="light"] .ambient { opacity: 0.25; }
+
+  input[type="range"].slider {
+    -webkit-appearance: none; appearance: none;
+    height: 4px; background: var(--line); cursor: pointer;
+  }
+  input[type="range"].slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px; background: var(--fg);
+    border: 0; cursor: pointer;
+  }
+  input[type="range"].slider::-moz-range-thumb {
+    width: 12px; height: 12px; background: var(--fg);
+    border: 0; cursor: pointer;
+  }
+
+  .focus-ring:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .border-line { border-color: var(--line); }
+  .text-fg2 { color: var(--fg-2); }
+  .text-fg3 { color: var(--fg-3); }
+  .bg-card { background: var(--card); }
+  .bg-bg2 { background: var(--bg-2); }
+</style>
+</head>
+<body class="min-h-screen overflow-x-hidden">
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─────────────────────── Icons ───────────────────────
+const I = (paths, opts={}) => ({ size=18, className='', strokeWidth=1.75, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={opts.fill||'none'} stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} {...rest}>{paths}</svg>
+);
+const Play      = I(<polygon points="6 4 20 12 6 20 6 4" />, { fill: 'currentColor' });
+const Pause     = I(<><rect x="6" y="4" width="4" height="16" fill="currentColor" /><rect x="14" y="4" width="4" height="16" fill="currentColor" /></>);
+const Volume    = I(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></>);
+const VolumeMute= I(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></>);
+const Sun       = I(<><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></>);
+const Moon      = I(<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>);
+const Globe     = I(<><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></>);
+const Radio     = I(<><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9c3.9 3.9 3.9 10.3 0 14.2"/></>);
+const Users     = I(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></>);
+const Share     = I(<><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></>);
+const ChevronRight = I(<polyline points="9 18 15 12 9 6"/>);
+const Check     = I(<polyline points="20 6 9 17 4 12"/>);
+
+// ─────────────────────── Utils ───────────────────────
+const cx = (...a) => a.filter(Boolean).join(' ');
+
+const fmtTime = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60), r = s % 60;
+  return `${m}:${r.toString().padStart(2, '0')}`;
+};
+
+// Derive two gradient colors from a string (deterministic)
+const strColor = (str = '') => {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+  h = Math.abs(h);
+  const hue1 = h % 360;
+  const hue2 = (hue1 + 130 + (h >> 8) % 60) % 360;
+  const sat  = 50 + (h >> 4) % 25;
+  const li1  = 38 + (h >> 12) % 12;
+  const li2  = 14 + (h >> 16) % 10;
+  return [`hsl(${hue1},${sat}%,${li1}%)`, `hsl(${hue2},${sat - 10}%,${li2}%)`];
+};
+
+// Capitalise mount slug nicely: "my-radio" → "My Radio"
+const slugToName = (s) =>
+  s.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+// ─────────────────────── Toast ───────────────────────
+const ToastCtx = React.createContext({ push: () => {} });
+const ToastProvider = ({ children }) => {
+  const [items, setItems] = useState([]);
+  const push = useCallback((msg) => {
+    const id = Math.random().toString(36).slice(2);
+    setItems(s => [...s, { id, msg }]);
+    setTimeout(() => setItems(s => s.filter(x => x.id !== id)), 2200);
+  }, []);
+  return (
+    <ToastCtx.Provider value={{ push }}>
+      {children}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
+        {items.map(t => (
+          <div key={t.id} className="toast pointer-events-auto bg-bg2 border border-line px-4 py-2.5 text-[13px] font-mono" style={{color:'var(--fg)'}}>{t.msg}</div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+};
+const useToast = () => React.useContext(ToastCtx);
+
+// ─────────────────────── AlbumArt ───────────────────────
+const AlbumArt = ({ colors, label, sublabel, duration, playing, onPlayToggle, big = false }) => {
+  const [c1, c2] = colors;
+  return (
+    <div className="relative group select-none" style={{ aspectRatio: '1 / 1', width: '100%', maxWidth: '100%' }}>
+      <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${c1} 0%, ${c2} 100%)` }} />
+      <div className="absolute inset-0 opacity-20 mix-blend-overlay" style={{
+        backgroundImage: 'radial-gradient(circle at 30% 20%, rgba(255,255,255,0.4) 0%, transparent 40%), radial-gradient(circle at 70% 80%, rgba(0,0,0,0.5) 0%, transparent 50%)',
+      }}/>
+      <div className="absolute inset-0 p-6 flex flex-col justify-between text-white">
+        <div className="flex items-start justify-between">
+          <div className="font-mono text-[10px] tracking-[0.2em] uppercase opacity-70">— Side A</div>
+          {duration > 0 && <div className="font-mono text-[10px] tracking-[0.2em] uppercase opacity-70">{fmtTime(duration)}</div>}
+        </div>
+        <div>
+          <div className="font-serif italic text-[28px] leading-[1.05] tracking-tight" style={{textWrap:'balance'}}>{label || '—'}</div>
+          <div className="font-mono text-[11px] tracking-wider uppercase opacity-80 mt-2">{sublabel || ''}</div>
+        </div>
+      </div>
+      {big && (
+        <div className="absolute -right-12 top-1/2 -translate-y-1/2 w-1/2 h-[80%] hidden lg:block pointer-events-none">
+          <div className={cx("relative w-full h-full rounded-full vinyl-spin", !playing && 'vinyl-paused')} style={{
+            background: 'radial-gradient(circle at center, #1a1a1a 0%, #0a0a0a 40%, #1a1a1a 41%, #0a0a0a 60%, #1a1a1a 61%, #0a0a0a 100%)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <div className="absolute inset-[40%] rounded-full" style={{ background: `linear-gradient(135deg, ${c1} 0%, ${c2} 100%)` }}/>
+            <div className="absolute inset-[47%] rounded-full bg-black"/>
+          </div>
+        </div>
+      )}
+      <button
+        onClick={onPlayToggle}
+        className="absolute inset-0 flex items-center justify-center focus-ring"
+        aria-label={playing ? 'Pause' : 'Play'}
+      >
+        <div className={cx(
+          "w-20 h-20 flex items-center justify-center transition-all",
+          "bg-white text-black",
+          big ? 'opacity-0 group-hover:opacity-100 scale-95 group-hover:scale-100' : 'opacity-100'
+        )}>
+          {playing ? <Pause size={28}/> : <Play size={28} className="translate-x-0.5"/>}
+        </div>
+      </button>
+    </div>
+  );
+};
+
+// ─────────────────────── Equalizer ───────────────────────
+const Eq = ({ playing, className='' }) => (
+  <div className={cx('flex items-end gap-[3px] w-[28px] h-[18px]', className)}>
+    {[1,2,3,4,5].map(i => (
+      <div key={i}
+        className={cx("eq-bar w-[3px] bg-current", !playing && 'eq-paused')}
+        style={{ animationName: `eq-${i}`, animationDelay: `${i*0.07}s` }}
+      />
+    ))}
+  </div>
+);
+
+// ─────────────────────── Live strip ───────────────────────
+const LiveStrip = ({ listeners, bitrate, codec, playing, accent }) => (
+  <div className="flex items-center gap-4 flex-wrap">
+    <div className="inline-flex items-center gap-2 px-2.5 py-1 border" style={{ borderColor: accent, color: accent, background: 'var(--accent-soft)' }}>
+      <span className="w-1.5 h-1.5 live-dot" style={{ background: accent }}/>
+      <span className="font-mono text-[11px] tracking-[0.18em] uppercase font-medium">On Air</span>
+    </div>
+    <div className="inline-flex items-center gap-1.5 font-mono text-[12px] text-fg2">
+      <Users size={13}/>
+      <span className="tabular-nums">{listeners.toLocaleString()}</span>
+      <span className="text-fg3">listening</span>
+    </div>
+    <div className="inline-flex items-center gap-1.5 font-mono text-[12px] text-fg2">
+      <Eq playing={playing}/>
+      <span className="text-fg3">{bitrate} · {codec}</span>
+    </div>
+  </div>
+);
+
+// ─────────────────────── Offline strip ───────────────────────
+const OfflineStrip = () => (
+  <div className="inline-flex items-center gap-2 px-2.5 py-1 border border-line">
+    <span className="w-1.5 h-1.5 bg-fg3"/>
+    <span className="font-mono text-[11px] tracking-[0.18em] uppercase text-fg3">Offline</span>
+  </div>
+);
+
+// ─────────────────────── Controls ───────────────────────
+const Controls = ({ playing, togglePlay, volume, setVolume, muted, setMuted, accent, disabled }) => (
+  <div className="mt-10">
+    <div className="flex items-center gap-2 flex-wrap">
+      <button
+        onClick={togglePlay}
+        disabled={disabled}
+        className="w-14 h-14 flex items-center justify-center transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{ background: accent, color: '#fff' }}
+        aria-label={playing ? 'Pause' : 'Play'}
+      >
+        {playing ? <Pause size={22}/> : <Play size={22} className="translate-x-0.5"/>}
+      </button>
+
+      <div className="flex items-center gap-3 ml-auto border border-line h-14 px-3 min-w-[180px]">
+        <button onClick={() => setMuted(m => !m)} className="text-fg2 hover:text-current transition-colors" aria-label="Mute">
+          {muted || volume === 0 ? <VolumeMute size={16}/> : <Volume size={16}/>}
+        </button>
+        <input
+          type="range" min="0" max="100" value={muted ? 0 : volume}
+          onChange={(e) => { setVolume(Number(e.target.value)); if (Number(e.target.value) > 0) setMuted(false); }}
+          className="slider flex-1"
+          style={{ background: `linear-gradient(to right, ${accent} 0%, ${accent} ${muted?0:volume}%, var(--line) ${muted?0:volume}%, var(--line) 100%)` }}
+        />
+        <span className="font-mono text-[11px] text-fg3 tabular-nums w-7 text-right">{muted ? 0 : volume}</span>
+      </div>
+    </div>
+  </div>
+);
+
+// ─────────────────────── Section header ───────────────────────
+const SectionHead = ({ label }) => (
+  <div className="flex items-baseline gap-3">
+    <h2 className="font-mono text-[11px] tracking-[0.2em] uppercase text-fg3 shrink-0">{label}</h2>
+    <div className="flex-1 h-px bg-line"/>
+  </div>
+);
+
+// ─────────────────────── About panel ───────────────────────
+const AboutPanel = ({ name, description, genre, website }) => (
+  <section>
+    <SectionHead label={`About ${name}`} />
+    {description && (
+      <p className="mt-5 text-[14px] leading-relaxed text-fg2" style={{textWrap:'pretty'}}>{description}</p>
+    )}
+    <div className="mt-5 flex flex-col gap-2.5">
+      {genre && (
+        <div className="inline-flex items-center gap-2.5 text-[13px]">
+          <Radio size={14} className="text-fg3"/>
+          <span className="font-mono">{genre}</span>
+        </div>
+      )}
+      {website && (
+        <a href={website.startsWith('http') ? website : `https://${website}`} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-2.5 text-[13px] hover:opacity-70 transition-opacity">
+          <Globe size={14} className="text-fg3"/>
+          <span className="font-mono">{website.replace(/^https?:\/\//, '')}</span>
+        </a>
+      )}
+    </div>
+  </section>
+);
+
+// ─────────────────────── Footer ───────────────────────
+const Footer = ({ accent }) => (
+  <footer className="mt-24 pt-8 border-t border-line">
+    <div className="flex items-end justify-between gap-6 flex-wrap">
+      <div className="font-mono text-[11px] text-fg3 leading-relaxed">
+        Streaming via Kast
+      </div>
+      <a
+        href="https://github.com/riza/kast"
+        target="_blank"
+        rel="noreferrer"
+        className="group inline-flex items-center gap-3 border border-line px-3 py-2.5 hover:bg-card transition-colors"
+      >
+        <div className="w-6 h-6 flex items-center justify-center text-white font-mono text-[11px] font-bold" style={{background: accent}}>K</div>
+        <div className="leading-tight">
+          <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-fg3">Powered by</div>
+          <div className="font-mono text-[13px] font-semibold tracking-tight -mt-0.5">Kast</div>
+        </div>
+        <ChevronRight size={13} className="text-fg3 group-hover:text-current group-hover:translate-x-0.5 transition-all"/>
+      </a>
+    </div>
+  </footer>
+);
+
+// ─────────────────────── App ───────────────────────
+const ACCENT = '#E85D2F';
+const ACCENT_SOFT = 'rgba(232,93,47,0.16)';
+
+const mountName = window.location.pathname.split('/').filter(Boolean).pop() || '';
+
+const App = () => {
+  const toast = useToast();
+
+  // Station + now-playing state
+  const [station, setStation] = useState(null);   // full API response
+  const [error, setError]     = useState(null);
+  const [theme, setTheme]     = useState('dark');
+
+  // Audio state
+  const [playing, setPlaying]   = useState(false);
+  const [volume, setVolume]     = useState(75);
+  const [muted, setMuted]       = useState(false);
+  const [hlsReady, setHlsReady] = useState(false);
+  const [hlsError, setHlsError] = useState(false);
+
+  const audioRef = useRef(null);
+  const hlsRef   = useRef(null);
+
+  // ── Poll public API ──────────────────────────────────────────────────────
+  useEffect(() => {
+    let mounted = true;
+    const fetchStation = async () => {
+      try {
+        const res = await fetch(`/public/${mountName}`);
+        if (!res.ok) { if (mounted) setError('Stream not found'); return; }
+        const data = await res.json();
+        if (mounted) { setStation(data); setError(null); }
+      } catch {
+        if (mounted) setError('Could not reach server');
+      }
+    };
+    fetchStation();
+    const interval = setInterval(fetchStation, 5000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
+  // ── HLS setup ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const src = `/hls/${mountName}/index.m3u8`;
+
+    let hls;
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      hls = new Hls({ lowLatencyMode: true, enableWorker: true });
+      hls.loadSource(src);
+      hls.attachMedia(audio);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => setHlsReady(true));
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) setHlsError(true);
+      });
+      hlsRef.current = hls;
+    } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+      audio.src = src;
+      setHlsReady(true);
+    } else {
+      setHlsError(true);
+    }
+    return () => { hls && hls.destroy(); };
+  }, []);
+
+  // ── Sync volume / mute to audio element ──────────────────────────────────
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.volume = muted ? 0 : volume / 100;
+  }, [volume, muted]);
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // ── Ambient glow from track colors ───────────────────────────────────────
+  const np = station?.now_playing;
+  const trackColors = strColor((np?.title || '') + (np?.artist || ''));
+  useEffect(() => {
+    document.documentElement.style.setProperty('--ambient-1', trackColors[0]);
+    document.documentElement.style.setProperty('--ambient-2', trackColors[1]);
+  }, [np?.title, np?.artist]);
+
+  // ── Page title ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const name = station ? slugToName(station.name.replace(/^\//, '')) : slugToName(mountName);
+    const track = np ? `${np.title} — ${np.artist}` : 'Live';
+    document.title = `${name} · ${track}`;
+  }, [station, np]);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.code === 'KeyD') setTheme(t => t === 'dark' ? 'light' : 'dark');
+      if (e.code === 'Space') { e.preventDefault(); handlePlayToggle(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hlsReady, playing]);
+
+  const handlePlayToggle = async () => {
+    const audio = audioRef.current;
+    if (!audio || !hlsReady) return;
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+    } else {
+      try {
+        await audio.play();
+        setPlaying(true);
+      } catch {
+        toast.push('Playback blocked — click Play to start');
+      }
+    }
+  };
+
+  const handleShare = () => {
+    navigator.clipboard?.writeText(window.location.href);
+    toast.push('Link copied to clipboard');
+  };
+
+  const isLive    = station?.status === 'live';
+  const stationName = station ? slugToName((station.name || mountName).replace(/^\//, '')) : slugToName(mountName);
+  const initials  = stationName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'K';
+  const listeners = station?.listeners ?? 0;
+  const bitrate   = station?.bitrate || '128k';
+  const codec     = station?.codec || 'AAC';
+
+  return (
+    <>
+      <div className="ambient" aria-hidden="true"/>
+      <div className="relative z-10 min-h-screen">
+        {/* Hidden audio element */}
+        <audio ref={audioRef} preload="none" aria-hidden="true" style={{display:'none'}}/>
+
+        {/* Top bar */}
+        <header className="px-6 lg:px-12 py-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 flex items-center justify-center text-white font-mono text-[14px] font-bold tracking-tight" style={{background: ACCENT}}>
+              {initials}
+            </div>
+            <div>
+              <div className="font-serif text-[20px] leading-none tracking-tight">{stationName}</div>
+              {station?.description && (
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg3 mt-1 max-w-[280px] truncate">{station.description}</div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleShare}
+              className="w-9 h-9 flex items-center justify-center border border-line hover:bg-card transition-colors focus-ring"
+              aria-label="Share"
+              title="Share"
+            >
+              <Share size={15}/>
+            </button>
+            <button
+              onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+              className="w-9 h-9 flex items-center justify-center border border-line hover:bg-card transition-colors focus-ring"
+              aria-label="Toggle theme"
+              title="Toggle theme (D)"
+            >
+              {theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>}
+            </button>
+          </div>
+        </header>
+
+        {/* Main */}
+        <main className="px-6 lg:px-12 pb-12 pt-4 max-w-[1400px] mx-auto">
+          {error ? (
+            <div className="mt-20 text-center">
+              <div className="font-mono text-[13px] text-fg3">{error}</div>
+              <div className="font-mono text-[11px] text-fg3 mt-2 uppercase tracking-wider">/{mountName}</div>
+            </div>
+          ) : (
+            <>
+              {/* Player — split layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-[480px_1fr] gap-10 lg:gap-14 items-start">
+                {/* Left — Art */}
+                <div className="relative" style={{maxWidth:'480px'}}>
+                  <AlbumArt
+                    colors={trackColors}
+                    label={np?.album || stationName}
+                    sublabel={np?.artist || (isLive ? 'Live' : 'Offline')}
+                    duration={np?.duration_ms ?? 0}
+                    playing={playing}
+                    onPlayToggle={handlePlayToggle}
+                    big
+                  />
+                  <div className="mt-4 font-mono text-[11px] uppercase tracking-wider text-fg3">
+                    {np ? `${np.album} · ${np.artist}` : stationName}
+                  </div>
+                </div>
+
+                {/* Right — Info + controls */}
+                <div className="flex flex-col">
+                  {isLive
+                    ? <LiveStrip listeners={listeners} bitrate={bitrate} codec={codec} playing={playing} accent={ACCENT}/>
+                    : <OfflineStrip/>
+                  }
+
+                  <h1 className="mt-6 font-serif text-[56px] md:text-[72px] leading-[0.95] tracking-tight" style={{textWrap:'balance'}}>
+                    {np?.title || stationName}
+                  </h1>
+
+                  {np && (
+                    <div className="mt-4 flex items-center gap-3 flex-wrap">
+                      <span className="font-mono text-[13px] uppercase tracking-wider text-fg2">{np.artist}</span>
+                      {np.album && <><span className="text-fg3">·</span><span className="font-mono text-[13px] text-fg3">{np.album}</span></>}
+                    </div>
+                  )}
+
+                  {!isLive && !np && (
+                    <div className="mt-4 font-mono text-[13px] text-fg3">
+                      {station ? 'Stream is offline' : 'Loading…'}
+                    </div>
+                  )}
+
+                  {hlsError && (
+                    <div className="mt-4 font-mono text-[12px] text-fg3 border border-line px-3 py-2 inline-block">
+                      HLS not supported in this browser. Try a modern browser or Safari.
+                    </div>
+                  )}
+
+                  <Controls
+                    playing={playing}
+                    togglePlay={handlePlayToggle}
+                    volume={volume}
+                    setVolume={setVolume}
+                    muted={muted}
+                    setMuted={setMuted}
+                    accent={ACCENT}
+                    disabled={!hlsReady || hlsError || !isLive}
+                  />
+                </div>
+              </div>
+
+              {/* Below: about panel */}
+              {(station?.description || station?.genre || station?.website) && (
+                <div className="mt-20 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+                  <AboutPanel
+                    name={stationName}
+                    description={station.description}
+                    genre={station.genre}
+                    website={station.website}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
+          <Footer accent={ACCENT}/>
+        </main>
+      </div>
+    </>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ToastProvider><App/></ToastProvider>
+);
+</script>
+</body>
+</html>

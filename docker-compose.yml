@@ -1,0 +1,31 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "443:443"
+    volumes:
+      - ./server/kast.toml:/app/kast.toml:ro
+      - ./server/data/music:/app/data/music      # ← host klasörü direkt mount
+      - ./server/data/hls:/app/data/hls
+      - ./server/data/mounts:/app/data/mounts
+      - ./server/data/library:/app/data/library
+      - ./server/data/playlists:/app/data/playlists
+    restart: unless-stopped
+    environment:
+      - GOGC=100
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_KEY=CHANGE_ME_BEFORE_PRODUCTION
+    restart: unless-stopped
+    depends_on:
+      - server
