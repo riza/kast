@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
@@ -169,13 +170,19 @@ func (m *Manager) AddPeer(mountName, offerSDP string) (string, error) {
 		return "", fmt.Errorf("webrtcmanager: create answer: %w", err)
 	}
 
-	// Wait for ICE gathering to complete before returning the answer.
+	// Wait for ICE gathering — but cap it so the HTTP response isn't blocked
+	// forever if Google STUN is unreachable. Host candidates are enough for
+	// local/LAN use; STUN adds reflexive candidates for NAT traversal.
 	gathered := webrtc.GatheringCompletePromise(pc)
 	if err := pc.SetLocalDescription(answer); err != nil {
 		pc.Close()
 		return "", fmt.Errorf("webrtcmanager: set local description: %w", err)
 	}
-	<-gathered
+	select {
+	case <-gathered:
+	case <-time.After(5 * time.Second):
+		slog.Debug("webrtc: ice gathering timeout, proceeding with partial candidates")
+	}
 
 	ms.mu.Lock()
 	ms.peers = append(ms.peers, entry)
