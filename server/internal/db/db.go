@@ -10,11 +10,23 @@ import (
 
 // Open opens (or creates) the SQLite database at path and runs all migrations.
 func Open(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path+"?_journal=WAL&_timeout=5000&_foreign_keys=on")
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
 	db.SetMaxOpenConns(1) // SQLite is single-writer
+
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA busy_timeout=5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("db: %s: %w", pragma, err)
+		}
+	}
+
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("db: migrate: %w", err)
