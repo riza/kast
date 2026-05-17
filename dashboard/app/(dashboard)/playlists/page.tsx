@@ -11,11 +11,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
-import {
-  Plus, ListMusic, Trash2, Search, Check, RefreshCw,
-  AlertTriangle, Play, GripVertical,
+  Plus, ListMusic, Trash2, Search, Check, Play, GripVertical,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -84,12 +80,6 @@ function applySessionsToPlaylists(playlists: Playlist[], sessions: APIAutoDJSess
     if (pl.autoDJ && pl.assignedMount) return { ...pl, autoDJ: false }
     return pl
   })
-}
-
-// ── Pulse dot ──
-
-function PulseDot() {
-  return <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot shrink-0" />
 }
 
 // ── Add Tracks Dialog ──
@@ -181,13 +171,11 @@ function AddTracksDialog({ open, onOpenChange, library, existingPaths, onAdd }: 
 
 // ── Track Row ──
 
-function TrackRow({ track, index, onRemove, onPlayFrom, autoDJActive,
+function TrackRow({ track, index, onRemove,
   isDragging, isDragOver, onDragStart, onDragEnd, onDragOver, onDrop,
 }: {
   track: Track; index: number
   onRemove: () => void
-  onPlayFrom?: () => void
-  autoDJActive: boolean
   isDragging: boolean; isDragOver: boolean
   onDragStart: () => void; onDragEnd: () => void
   onDragOver: (e: React.DragEvent) => void; onDrop: () => void
@@ -215,21 +203,12 @@ function TrackRow({ track, index, onRemove, onPlayFrom, autoDJActive,
         <GripVertical className="h-3.5 w-3.5" />
       </div>
 
-      {/* Index / Play button */}
+      {/* Index */}
       <div className="flex justify-center">
-        {hovered && autoDJActive && onPlayFrom ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); onPlayFrom() }}
-            className="h-4 w-4 flex items-center justify-center text-k-400 hover:text-k-300 transition-colors"
-            title="Play from here"
-          >
-            <Play className="h-3 w-3 fill-current" />
-          </button>
-        ) : hovered ? (
-          <Play className="h-3 w-3 fill-current text-ink-400" />
-        ) : (
-          <span className="font-mono text-[11px] text-ink-600">{index + 1}</span>
-        )}
+        {hovered
+          ? <Play className="h-3 w-3 fill-current text-ink-400" />
+          : <span className="font-mono text-[11px] text-ink-600">{index + 1}</span>
+        }
       </div>
 
       {/* Title + Artist */}
@@ -254,14 +233,9 @@ function TrackRow({ track, index, onRemove, onPlayFrom, autoDJActive,
 
 // ── Playlist Detail ──
 
-function PlaylistDetail({ playlist, library, mounts, onChange, onDelete, onAutoDJStart, onAutoDJStop, onAutoDJRestart, onPlayFrom, isDirty }: {
-  playlist: Playlist; library: Track[]; mounts: APIMount[]
+function PlaylistDetail({ playlist, library, onChange, onDelete }: {
+  playlist: Playlist; library: Track[]
   onChange: (updated: Playlist) => void; onDelete: () => void
-  onAutoDJStart: (mountName: string) => Promise<void>
-  onAutoDJStop:  (mountName: string) => Promise<void>
-  onAutoDJRestart: (mountName: string) => Promise<void>
-  onPlayFrom: (path: string) => Promise<void>
-  isDirty: boolean
 }) {
   const [addOpen, setAddOpen]         = React.useState(false)
   const [nameEdit, setNameEdit]       = React.useState(false)
@@ -303,11 +277,6 @@ function PlaylistDetail({ playlist, library, mounts, onChange, onDelete, onAutoD
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 border-b border-ink-800 px-8 pb-6 pt-8">
-        {playlist.autoDJ && (
-          <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-emerald-400">
-            <PulseDot /> On air · {playlist.assignedMount}
-          </div>
-        )}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             {nameEdit ? (
@@ -359,83 +328,6 @@ function PlaylistDetail({ playlist, library, mounts, onChange, onDelete, onAutoD
           </div>
         </div>
 
-        {/* Settings row */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 text-[12.5px]">
-          <div className="flex items-center gap-2">
-            <span className="text-ink-500">Mode</span>
-            <div className="flex bg-ink-900 border border-ink-800 p-0.5 text-[11.5px]">
-              {(["sequential", "shuffle"] as PlayMode[]).map((m) => (
-                <button key={m} onClick={() => onChange({ ...playlist, mode: m })}
-                  className={cn("px-2.5 py-1 capitalize transition-colors",
-                    playlist.mode === m ? "bg-ink-800 text-ink-100 font-medium" : "text-ink-500 hover:text-ink-200"
-                  )}>
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-ink-500">Mount</span>
-            <Select value={playlist.assignedMount || "__none__"}
-              onValueChange={(v) => onChange({ ...playlist, assignedMount: v === "__none__" ? "" : v, autoDJ: false })}>
-              <SelectTrigger className="h-7 w-32 text-[12px] bg-ink-900 border-ink-800 text-ink-200"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None</SelectItem>
-                {mounts.map((m) => <SelectItem key={m.name} value={m.name}>{m.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-ink-500">AutoDJ</span>
-            <button
-              disabled={!playlist.assignedMount || tracks.length === 0}
-              onClick={async () => {
-                if (!playlist.assignedMount) { toast.error("Assign a mount first"); return }
-                if (!playlist.autoDJ && tracks.length === 0) { toast.error("Add tracks first"); return }
-                const next = !playlist.autoDJ
-                onChange({ ...playlist, autoDJ: next })
-                try {
-                  if (next) await onAutoDJStart(playlist.assignedMount)
-                  else      await onAutoDJStop(playlist.assignedMount)
-                } catch { onChange({ ...playlist, autoDJ: !next }) }
-              }}
-              className={cn("relative h-5 w-9 rounded-full transition-colors disabled:opacity-40",
-                playlist.autoDJ ? "bg-k-500" : "bg-ink-700"
-              )}>
-              <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all",
-                playlist.autoDJ ? "left-[18px]" : "left-0.5"
-              )} />
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-ink-500">Crossfade</span>
-            <span className="font-mono text-ink-200 text-[12px]">{(playlist.crossfade / 1000).toFixed(1)}s</span>
-            <input type="range" min={0} max={10000} step={500} value={playlist.crossfade}
-              onChange={(e) => onChange({ ...playlist, crossfade: Number(e.target.value) })}
-              className="h-1 w-20 accent-k-500" />
-          </div>
-        </div>
-
-        {/* Dirty warning */}
-        {playlist.autoDJ && playlist.assignedMount && isDirty && (
-          <div className="mt-4 flex items-center justify-between gap-3 border border-amber-500/25 bg-amber-500/8 px-3 py-2">
-            <div className="flex items-center gap-2 text-[12px] text-amber-400">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              Changes take effect after AutoDJ restart.
-            </div>
-            <button onClick={() => onAutoDJRestart(playlist.assignedMount)}
-              className="h-7 px-2.5 border border-amber-500/30 hover:bg-amber-500/10 text-[11.5px] text-amber-400 inline-flex items-center gap-1 transition-colors">
-              <RefreshCw className="h-3 w-3" /> Restart
-            </button>
-          </div>
-        )}
-
-        {/* AutoDJ hint */}
-        {playlist.autoDJ && tracks.length > 0 && (
-          <p className="mt-2 text-[11px] text-ink-600">
-            Click ▶ on any track to restart AutoDJ from that song.
-          </p>
-        )}
       </div>
 
       {/* Track list */}
@@ -472,11 +364,6 @@ function PlaylistDetail({ playlist, library, mounts, onChange, onDelete, onAutoD
                     track={track}
                     index={i}
                     onRemove={() => removeTrack(track.path)}
-                    onPlayFrom={playlist.autoDJ && playlist.assignedMount
-                      ? () => onPlayFrom(track.path)
-                      : undefined
-                    }
-                    autoDJActive={playlist.autoDJ}
                     isDragging={dragIndex === realIndex}
                     isDragOver={dragOverIndex === realIndex}
                     onDragStart={() => setDragIndex(realIndex)}
@@ -677,19 +564,12 @@ export default function PlaylistsPage() {
                   className={cn("w-full px-3 py-2.5 text-left transition-colors",
                     isActive ? "bg-ink-800 border border-ink-700" : "border border-transparent hover:bg-ink-800/50"
                   )}>
-                  <div className="flex items-center justify-between gap-1">
-                    <span className={cn("truncate text-[13px] font-medium", isActive ? "text-ink-100" : "text-ink-300")}>
-                      {pl.name}
-                    </span>
-                    {pl.autoDJ && (
-                      <span className="flex shrink-0 items-center gap-1 font-mono text-[10px] text-emerald-400">
-                        <PulseDot /> LIVE
-                      </span>
-                    )}
-                  </div>
+                  <span className={cn("truncate text-[13px] font-medium", isActive ? "text-ink-100" : "text-ink-300")}>
+                    {pl.name}
+                  </span>
                   <div className="mt-0.5 font-mono text-[11px] text-ink-500">
                     {trackCount > 0
-                      ? `${trackCount} track${trackCount !== 1 ? "s" : ""}${dur ? ` · ${dur}` : ""} · ${pl.mode === "shuffle" ? "Shuffle" : "Sequential"}`
+                      ? `${trackCount} track${trackCount !== 1 ? "s" : ""}${dur ? ` · ${dur}` : ""}`
                       : "Empty"
                     }
                   </div>
@@ -704,13 +584,8 @@ export default function PlaylistsPage() {
       <main className="flex flex-1 flex-col overflow-hidden bg-ink-950">
         {selected ? (
           <PlaylistDetail
-            key={selected.id} playlist={selected} library={library} mounts={mounts}
-            isDirty={dirtyIds.has(selected.id)}
+            key={selected.id} playlist={selected} library={library}
             onChange={updatePlaylist} onDelete={() => deletePlaylist(selected.id)}
-            onAutoDJStart={(m) => handleAutoDJStart(m, selected)}
-            onAutoDJStop={(m) => handleAutoDJStop(m, selected)}
-            onAutoDJRestart={(m) => handleAutoDJRestart(m, selected)}
-            onPlayFrom={(path) => handlePlayFrom(selected, path)}
           />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-ink-500">

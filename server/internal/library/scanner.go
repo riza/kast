@@ -72,6 +72,76 @@ func (s *Scanner) Tracks() []*Track {
 	return out
 }
 
+// UpdateTrack persists a metadata override for the track with the given ID
+// and updates the in-memory record immediately. Overrides survive re-scans.
+func (s *Scanner) UpdateTrack(id, title, artist, album, genre string) (*Track, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var target *Track
+	for _, t := range s.tracks {
+		if t.ID == id {
+			target = t
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("track not found: %s", id)
+	}
+
+	if _, err := s.db.Exec(`
+		INSERT INTO track_overrides (path, title, artist, album, genre)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			title  = excluded.title,
+			artist = excluded.artist,
+			album  = excluded.album,
+			genre  = excluded.genre`,
+		target.Path, title, artist, album, genre,
+	); err != nil {
+		return nil, fmt.Errorf("library: update track: %w", err)
+	}
+
+	target.Title  = title
+	target.Artist = artist
+	target.Album  = album
+	target.Genre  = genre
+
+	out := *target
+	return &out, nil
+}
+
+// applyOverridesLocked merges stored metadata overrides into tracks.
+// Must be called with s.mu held.
+func (s *Scanner) applyOverridesLocked(tracks []*Track) {
+	rows, err := s.db.Query(`SELECT path, title, artist, album, genre FROM track_overrides`)
+	if err != nil {
+		slog.Warn("library: load overrides", "err", err)
+		return
+	}
+	defer rows.Close()
+
+	type override struct{ title, artist, album, genre string }
+	overrides := make(map[string]override)
+	for rows.Next() {
+		var path string
+		var o override
+		if err := rows.Scan(&path, &o.title, &o.artist, &o.album, &o.genre); err != nil {
+			continue
+		}
+		overrides[path] = o
+	}
+
+	for _, t := range tracks {
+		if o, ok := overrides[t.Path]; ok {
+			t.Title  = o.title
+			t.Artist = o.artist
+			t.Album  = o.album
+			t.Genre  = o.genre
+		}
+	}
+}
+
 // Scan walks all configured directories and updates the track list.
 func (s *Scanner) Scan(ctx context.Context) error {
 	var found []*Track
@@ -118,6 +188,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 
 	s.mu.Lock()
 	s.tracks = found
+	s.applyOverridesLocked(found)
 	s.mu.Unlock()
 
 	if err := s.persist(found); err != nil {
@@ -181,6 +252,7 @@ func (s *Scanner) load() error {
 	}
 	s.mu.Lock()
 	s.tracks = tracks
+	s.applyOverridesLocked(tracks)
 	s.mu.Unlock()
 	return nil
 }

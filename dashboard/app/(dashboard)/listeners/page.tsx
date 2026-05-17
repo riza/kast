@@ -33,6 +33,25 @@ function timeAgo(iso: string): string {
   return `${Math.floor(diff / 60)}m ago`
 }
 
+function parseUA(ua: string): string {
+  if (!ua) return "—"
+  const s = ua.toLowerCase()
+  if (s.includes("vlc"))             return "VLC"
+  if (s.includes("mpv"))             return "mpv"
+  if (s.includes("lavf"))            return "FFmpeg"
+  if (s.includes("liquidsoap"))      return "Liquidsoap"
+  if (s.startsWith("curl"))          return "cURL"
+  if (s.includes("python-requests")) return "Python"
+  if (s.includes("applecoremedia"))  return "AirPlay"
+  if (s.includes("itunes"))          return "iTunes"
+  if (s.includes("edg/"))            return "Edge"
+  if (s.includes("chrome"))          return "Chrome"
+  if (s.includes("firefox"))         return "Firefox"
+  if (s.includes("safari"))          return "Safari"
+  const first = ua.split(/[/ ]/)[0]
+  return first.length > 14 ? first.slice(0, 14) + "…" : first
+}
+
 // ── Row ──
 
 function ListenerRow({ entry, mountNames }: { entry: APIListener; mountNames: Map<string, string> }) {
@@ -48,10 +67,16 @@ function ListenerRow({ entry, mountNames }: { entry: APIListener; mountNames: Ma
         </span>
       : <span className="text-ink-600">—</span>
 
+  const client = parseUA(entry.user_agent)
+
   return (
-    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_160px_80px] gap-3 px-1 py-3 items-center border-b border-ink-800/60 last:border-0">
+    <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_90px_minmax(0,1fr)_72px] gap-3 px-1 py-3 items-center border-b border-ink-800/60 last:border-0">
       <span className="font-mono text-[13px] text-ink-100 truncate">{entry.ip}</span>
       <span className="text-[12.5px] font-mono truncate">{location}</span>
+      <span
+        className="font-mono text-[11.5px] text-ink-400 truncate"
+        title={entry.user_agent || undefined}
+      >{client}</span>
       <span className="font-mono text-[12.5px] text-k-400 truncate">{mountLabel}</span>
       <span className="text-right text-[11.5px] text-ink-500 font-mono">{ago}</span>
     </div>
@@ -66,12 +91,25 @@ export default function ListenersPage() {
   const [error,     setError]     = React.useState<string | null>(null)
   const [lastRefresh, setLastRefresh] = React.useState<Date>(new Date())
   const [refreshing,  setRefreshing]  = React.useState(false)
+  const [mountFilter, setMountFilter] = React.useState<string | null>(null)
 
   const mountNames = React.useMemo(() => {
     const m = new Map<string, string>()
     mounts.forEach(mt => m.set(mt.name, mt.player_station_name || mt.name))
     return m
   }, [mounts])
+
+  const activeMounts = React.useMemo(() => {
+    if (!listeners) return []
+    const counts = new Map<string, number>()
+    for (const l of listeners) counts.set(l.mount, (counts.get(l.mount) ?? 0) + 1)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])
+  }, [listeners])
+
+  const filtered = React.useMemo(() =>
+    mountFilter ? (listeners ?? []).filter(l => l.mount === mountFilter) : (listeners ?? []),
+    [listeners, mountFilter]
+  )
 
   const load = React.useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
@@ -150,9 +188,43 @@ export default function ListenersPage() {
       </div>
 
       {/* Listener table */}
-      <h2 className="text-[11px] font-medium text-ink-500 uppercase tracking-wider font-mono mb-3">
-        Active listeners
-      </h2>
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <h2 className="text-[11px] font-medium text-ink-500 uppercase tracking-wider font-mono">
+          {mountFilter
+            ? `${filtered.length} listener${filtered.length !== 1 ? "s" : ""} on ${mountNames.get(mountFilter) ?? mountFilter}`
+            : "Active listeners"}
+        </h2>
+        {activeMounts.length > 1 && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setMountFilter(null)}
+              className={cn(
+                "px-2.5 py-1 rounded text-[11px] font-mono transition-colors",
+                mountFilter === null
+                  ? "bg-k-500/20 text-k-400 border border-k-500/40"
+                  : "text-ink-500 hover:text-ink-300 border border-transparent"
+              )}
+            >
+              All
+            </button>
+            {activeMounts.map(([mount, count]) => (
+              <button
+                key={mount}
+                onClick={() => setMountFilter(mount === mountFilter ? null : mount)}
+                className={cn(
+                  "px-2.5 py-1 rounded text-[11px] font-mono transition-colors",
+                  mountFilter === mount
+                    ? "bg-k-500/20 text-k-400 border border-k-500/40"
+                    : "text-ink-500 hover:text-ink-300 border border-transparent"
+                )}
+              >
+                {mountNames.get(mount) ?? mount}
+                <span className="ml-1.5 text-ink-600">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {listeners === null ? (
         <div className="border-t border-ink-800 py-10 flex items-center justify-center">
@@ -165,13 +237,14 @@ export default function ListenersPage() {
         </div>
       ) : (
         <div className="border-t border-ink-800">
-          <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_160px_80px] gap-3 px-1 py-2 text-[10.5px] uppercase tracking-wider text-ink-500 font-mono border-b border-ink-800">
+          <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_90px_minmax(0,1fr)_72px] gap-3 px-1 py-2 text-[10.5px] uppercase tracking-wider text-ink-500 font-mono border-b border-ink-800">
             <div>IP</div>
             <div>Location</div>
+            <div>Client</div>
             <div>Mount</div>
             <div className="text-right">Seen</div>
           </div>
-          {listeners.map((l, i) => (
+          {filtered.map((l, i) => (
             <ListenerRow key={`${l.ip}-${l.mount}-${i}`} entry={l} mountNames={mountNames} />
           ))}
         </div>

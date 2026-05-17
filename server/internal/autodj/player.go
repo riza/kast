@@ -29,6 +29,7 @@ const (
 type Player struct {
 	mu           sync.Mutex
 	tracks       []*library.Track
+	queue        []*library.Track // FIFO one-shot; drained before regular playlist advances
 	mode         Mode
 	crossfadeMs  int
 	current      int
@@ -195,11 +196,54 @@ func (p *Player) playTrack(ctx context.Context, t *library.Track, out io.Writer)
 	return cmd.Run()
 }
 
+// InsertNext appends t to the one-shot queue. The queue drains before
+// nextTrack() advances the regular playlist.
+func (p *Player) InsertNext(t *library.Track) {
+	p.mu.Lock()
+	p.queue = append(p.queue, t)
+	p.mu.Unlock()
+}
+
+// JumpTo sets playback to tracks[index] and immediately kills the current
+// ffmpeg process so the loop picks up the new position.
+func (p *Player) JumpTo(index int) {
+	p.mu.Lock()
+	if index >= 0 && index < len(p.tracks) {
+		p.current = index
+		p.queue = p.queue[:0] // clear pending queue
+	}
+	p.mu.Unlock()
+	p.skipMu.Lock()
+	cmd := p.currentCmd
+	p.skipMu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+}
+
+// Tracks returns a snapshot of the track list, the ID of the currently
+// playing track (empty string if idle), and the pending one-shot queue.
+func (p *Player) Tracks() (tracks []*library.Track, nowPlayingID string, queue []*library.Track) {
+	p.mu.Lock()
+	tracks = append([]*library.Track(nil), p.tracks...)
+	queue = append([]*library.Track(nil), p.queue...)
+	p.mu.Unlock()
+	if np := p.nowPlaying.Load(); np != nil {
+		nowPlayingID = np.ID
+	}
+	return
+}
+
 func (p *Player) nextTrack() *library.Track {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.tracks) == 0 {
 		return nil
+	}
+	if len(p.queue) > 0 {
+		t := p.queue[0]
+		p.queue = p.queue[1:]
+		return t
 	}
 	t := p.tracks[p.current]
 	p.current = (p.current + 1) % len(p.tracks)

@@ -2,6 +2,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -32,27 +33,32 @@ import (
 // listenerTracker counts unique IPs actively requesting HLS content.
 type listenerTracker struct {
 	mu      sync.Mutex
-	entries map[string]map[string]time.Time // mountName -> IP -> lastSeen
+	entries map[string]map[string]listenerData // mountName -> IP -> data
 	ttl     time.Duration
+}
+
+type listenerData struct {
+	lastSeen  time.Time
+	userAgent string
 }
 
 func newListenerTracker(ttl time.Duration) *listenerTracker {
 	return &listenerTracker{
-		entries: make(map[string]map[string]time.Time),
+		entries: make(map[string]map[string]listenerData),
 		ttl:     ttl,
 	}
 }
 
-func (lt *listenerTracker) touch(mountName, ip string) int {
+func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	if lt.entries[mountName] == nil {
-		lt.entries[mountName] = make(map[string]time.Time)
+		lt.entries[mountName] = make(map[string]listenerData)
 	}
-	lt.entries[mountName][ip] = time.Now()
+	lt.entries[mountName][ip] = listenerData{lastSeen: time.Now(), userAgent: userAgent}
 	cutoff := time.Now().Add(-lt.ttl)
 	for k, v := range lt.entries[mountName] {
-		if v.Before(cutoff) {
+		if v.lastSeen.Before(cutoff) {
 			delete(lt.entries[mountName], k)
 		}
 	}
@@ -64,6 +70,7 @@ type listenerEntry struct {
 	Mount       string    `json:"mount"`
 	LastSeen    time.Time `json:"last_seen"`
 	CountryCode string    `json:"country_code"`
+	UserAgent   string    `json:"user_agent"`
 }
 
 // all returns every active listener across all mounts, expiring stale entries.
@@ -73,12 +80,12 @@ func (lt *listenerTracker) all() []listenerEntry {
 	cutoff := time.Now().Add(-lt.ttl)
 	var out []listenerEntry
 	for mount, ips := range lt.entries {
-		for ip, t := range ips {
-			if t.Before(cutoff) {
+		for ip, d := range ips {
+			if d.lastSeen.Before(cutoff) {
 				delete(ips, ip)
 				continue
 			}
-			e := listenerEntry{IP: ip, Mount: mount, LastSeen: t}
+			e := listenerEntry{IP: ip, Mount: mount, LastSeen: d.lastSeen, UserAgent: d.userAgent}
 			if parsed := net.ParseIP(ip); parsed != nil {
 				e.CountryCode = iploc.Country(parsed)
 			}
@@ -96,7 +103,7 @@ func (lt *listenerTracker) sweep() map[string]int {
 	counts := make(map[string]int, len(lt.entries))
 	for mount, ips := range lt.entries {
 		for k, v := range ips {
-			if v.Before(cutoff) {
+			if v.lastSeen.Before(cutoff) {
 				delete(ips, k)
 			}
 		}
@@ -108,6 +115,7 @@ func (lt *listenerTracker) sweep() map[string]int {
 // NewApp builds and returns the Fiber application.
 func NewApp(
 	cfg *config.Config,
+	configPath string,
 	auth *authmanager.Manager,
 	mounts *mount.Manager,
 	scanner *library.Scanner,
@@ -171,7 +179,7 @@ func NewApp(
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
 			}
-			count := listenerTrack.touch("/"+mountName, ip)
+			count := listenerTrack.touch("/"+mountName, ip, c.Get("User-Agent"))
 			mounts.SetListeners("/"+mountName, count)
 		}
 		fullPath := filepath.Join(dir, filepath.Clean("/"+filePath))
@@ -390,14 +398,17 @@ func NewApp(
 	api.Put("/users/:id", adminOnly, uh.Update)
 	api.Delete("/users/:id", adminOnly, uh.Delete)
 
-	mh := &handler.Mounts{Manager: mounts}
-	lh := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
+	mh  := &handler.Mounts{Manager: mounts}
+	lh  := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
 	plh := &handler.Playlists{Manager: playlists}
-	djh  := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
+	djh := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
+	sh  := &handler.Settings{Cfg: cfg, ConfigPath: configPath}
 	whep := &handler.WHEP{Manager: djm.WebRTC}
 	yth  := &handler.YTImport{Manager: ytm}
 
 	api.Get("/status", handler.Status)
+	api.Get("/settings", adminOnly, sh.Get)
+	api.Patch("/settings", adminOnly, sh.Update)
 
 	api.Get("/listeners", func(c *fiber.Ctx) error {
 		entries := listenerTrack.all()
@@ -427,6 +438,10 @@ func NewApp(
 	api.Get("/mounts/:name/autodj", djh.Status)
 	api.Delete("/mounts/:name/autodj", djh.Stop)
 	api.Post("/mounts/:name/autodj/skip", djh.Skip)
+	api.Get("/mounts/:name/autodj/tracks", djh.Tracks)
+	api.Post("/mounts/:name/autodj/jump", djh.JumpTo)
+	api.Post("/mounts/:name/autodj/queue", djh.InsertNext)
+	api.Get("/mounts/:name/autodj/history", djh.History)
 	api.Get("/mounts/:name/nowplaying", djh.NowPlaying)
 	api.Get("/autodj/sessions", djh.Sessions)
 
@@ -441,6 +456,7 @@ func NewApp(
 	})
 
 	api.Get("/library", lh.List)
+	api.Patch("/library/:id", lh.Update)
 	api.Post("/library/scan", lh.Scan)
 	api.Post("/library/upload", lh.Upload)
 	api.Post("/library/import/youtube/preview", yth.Preview)
@@ -457,11 +473,21 @@ func NewApp(
 	return app
 }
 
-// extractBearer pulls the token from "Authorization: Bearer <token>".
+// extractBearer pulls the source password from the Authorization header.
+// Accepts both Bearer (curl, ffmpeg, liquidsoap) and Basic (OBS, BUTT, Mixxx)
+// auth schemes. For Basic, the password field is used as the source password.
 func extractBearer(c *fiber.Ctx) string {
 	v := c.Get("Authorization")
-	if len(v) > 7 && v[:7] == "Bearer " {
+	if strings.HasPrefix(v, "Bearer ") {
 		return v[7:]
+	}
+	if strings.HasPrefix(v, "Basic ") {
+		decoded, err := base64.StdEncoding.DecodeString(v[6:])
+		if err == nil {
+			if _, pwd, ok := strings.Cut(string(decoded), ":"); ok {
+				return pwd
+			}
+		}
 	}
 	return ""
 }

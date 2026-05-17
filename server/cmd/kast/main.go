@@ -109,7 +109,7 @@ func run() error {
 	ytm := ytimport.NewManager(importDir, scanner)
 
 	// ── Fiber app ────────────────────────────────────────────────────────────
-	app := api.NewApp(cfg, auth, mounts, scanner, segmenter, src, playlists, djm, ytm)
+	app := api.NewApp(cfg, *cfgPath, auth, mounts, scanner, segmenter, src, playlists, djm, ytm)
 
 	// ── Initial library scan + AutoDJ restore (background) ───────────────────
 	go func() {

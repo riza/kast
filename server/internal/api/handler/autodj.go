@@ -151,3 +151,85 @@ func (h *AutoDJ) NowPlaying(c *fiber.Ctx) error {
 		DurationMs: t.DurationMs,
 	})
 }
+
+type tracksResponse struct {
+	Tracks       []nowPlayingResponse `json:"tracks"`
+	NowPlayingID string               `json:"now_playing_id"`
+	Queue        []nowPlayingResponse `json:"queue"`
+}
+
+func toTrackInfo(t *library.Track) nowPlayingResponse {
+	return nowPlayingResponse{ID: t.ID, Title: t.Title, Artist: t.Artist, Album: t.Album, DurationMs: t.DurationMs}
+}
+
+// Tracks godoc: GET /api/mounts/:name/autodj/tracks
+func (h *AutoDJ) Tracks(c *fiber.Ctx) error {
+	mountName := "/" + c.Params("name")
+	tracks, npID, queue := h.DJManager.Tracks(mountName)
+	if tracks == nil {
+		return respond.Error(c, fiber.StatusNotFound, "no active autodj session")
+	}
+	resp := tracksResponse{
+		Tracks:       make([]nowPlayingResponse, len(tracks)),
+		NowPlayingID: npID,
+		Queue:        make([]nowPlayingResponse, len(queue)),
+	}
+	for i, t := range tracks {
+		resp.Tracks[i] = toTrackInfo(t)
+	}
+	for i, t := range queue {
+		resp.Queue[i] = toTrackInfo(t)
+	}
+	return respond.OK(c, resp)
+}
+
+// JumpTo godoc: POST /api/mounts/:name/autodj/jump
+func (h *AutoDJ) JumpTo(c *fiber.Ctx) error {
+	mountName := "/" + c.Params("name")
+	var req struct {
+		Index int `json:"index"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return respond.Error(c, fiber.StatusBadRequest, "invalid JSON")
+	}
+	if err := h.DJManager.JumpTo(mountName, req.Index); err != nil {
+		return respond.Error(c, fiber.StatusNotFound, err.Error())
+	}
+	return respond.OK(c, fiber.Map{"status": "jumped", "index": req.Index})
+}
+
+// InsertNext godoc: POST /api/mounts/:name/autodj/queue
+func (h *AutoDJ) InsertNext(c *fiber.Ctx) error {
+	mountName := "/" + c.Params("name")
+	var req struct {
+		TrackID string `json:"track_id"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.TrackID == "" {
+		return respond.Error(c, fiber.StatusBadRequest, "track_id is required")
+	}
+	var found *library.Track
+	for _, t := range h.Scanner.Tracks() {
+		if t.ID == req.TrackID {
+			found = t
+			break
+		}
+	}
+	if found == nil {
+		return respond.Error(c, fiber.StatusNotFound, "track not found")
+	}
+	if err := h.DJManager.InsertNext(mountName, found); err != nil {
+		return respond.Error(c, fiber.StatusNotFound, err.Error())
+	}
+	return respond.OK(c, fiber.Map{"status": "queued"})
+}
+
+// History godoc: GET /api/mounts/:name/autodj/history
+func (h *AutoDJ) History(c *fiber.Ctx) error {
+	mountName := "/" + c.Params("name")
+	tracks := h.DJManager.RecentTracks(mountName)
+	out := make([]nowPlayingResponse, 0, len(tracks))
+	for _, t := range tracks {
+		out = append(out, toTrackInfo(t))
+	}
+	return respond.OK(c, out)
+}

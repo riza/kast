@@ -23,7 +23,9 @@ if grep -q '"CHANGE_ME_BEFORE_PRODUCTION"' "$CONFIG"; then
         GEN_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
         echo "[kast] =================================================="
         echo "[kast]  Generated API key: $GEN_KEY"
-        echo "[kast]  Enter this in Dashboard → Settings → Connection"
+        echo "[kast]  Use for external API access:"
+        echo "[kast]  curl -H 'Authorization: Bearer $GEN_KEY' ..."
+        echo "[kast]  Dashboard login uses username + password instead."
         echo "[kast] =================================================="
     fi
     set_toml_string "api_key" "$GEN_KEY"

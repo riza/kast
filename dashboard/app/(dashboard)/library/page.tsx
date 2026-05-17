@@ -45,11 +45,14 @@ import {
   Music2,
   Plus,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   CheckCircle2,
   XCircle,
   Clock,
   Upload,
+  Pencil,
 } from "lucide-react"
 
 function YtIcon({ className }: { className?: string }) {
@@ -71,6 +74,7 @@ import {
 // ── Types ──
 
 type Track = {
+  id:          string
   path:        string
   title:       string
   artist:      string
@@ -101,9 +105,10 @@ function fmtBytes(bytes: number): string {
 
 function adaptApiTrack(t: APITrack): Track {
   return {
+    id:          t.id,
     path:        t.path,
     title:       t.title  || t.path.split("/").pop()?.replace(/\.[^.]+$/, "") || t.path,
-    artist:      t.artist || "Unknown",
+    artist:      t.artist || "",
     album:       t.album  || "",
     genre:       t.genre  || "",
     duration:    formatMs(t.duration_ms),
@@ -495,6 +500,86 @@ function YouTubeImportModal({
   )
 }
 
+// ── Edit Track Dialog ─────────────────────────────────────────────────────────
+
+function EditTrackDialog({
+  track,
+  onClose,
+  onSaved,
+}: {
+  track:   Track | null
+  onClose: () => void
+  onSaved: (updated: Track) => void
+}) {
+  const [title,  setTitle]  = React.useState("")
+  const [artist, setArtist] = React.useState("")
+  const [album,  setAlbum]  = React.useState("")
+  const [genre,  setGenre]  = React.useState("")
+  const [saving, setSaving] = React.useState(false)
+
+  React.useEffect(() => {
+    if (track) {
+      setTitle(track.title)
+      setArtist(track.artist)
+      setAlbum(track.album)
+      setGenre(track.genre)
+    }
+  }, [track])
+
+  const handleSave = async () => {
+    if (!track) return
+    setSaving(true)
+    try {
+      const updated = await api.library.update(track.id, { title, artist, album, genre })
+      onSaved(adaptApiTrack(updated))
+      toast.success("Track updated")
+      onClose()
+    } catch (err: unknown) {
+      toast.error(`Failed to save: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!track} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit Track</DialogTitle>
+          <DialogDescription className="truncate text-xs font-mono">
+            {track?.path.split("/").pop()}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 py-1">
+          {(
+            [
+              { label: "Title",  value: title,  set: setTitle  },
+              { label: "Artist", value: artist, set: setArtist },
+              { label: "Album",  value: album,  set: setAlbum  },
+              { label: "Genre",  value: genre,  set: setGenre  },
+            ] as const
+          ).map(({ label, value, set }) => (
+            <div key={label} className="grid gap-1.5">
+              <label className="text-xs text-muted-foreground">{label}</label>
+              <Input
+                value={value}
+                onChange={(e) => set(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSave()}
+              />
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Active Jobs Panel ─────────────────────────────────────────────────────────
 
 function JobStatusIcon({ status }: { status: string }) {
@@ -562,12 +647,16 @@ function ActiveJobs({ jobIds, onAllDone }: { jobIds: string[]; onAllDone: () => 
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 50
+
 export default function LibraryPage() {
   const [tracks, setTracks]           = React.useState<Track[]>([])
   const [loading, setLoading]         = React.useState(true)
   const [scanning, setScanning]       = React.useState(false)
   const [search, setSearch]           = React.useState("")
   const [genreFilter, setGenreFilter] = React.useState("all")
+  const [page, setPage]               = React.useState(1)
+  const [editTrack, setEditTrack]     = React.useState<Track | null>(null)
   const [ytOpen, setYtOpen]             = React.useState(false)
   const [uploadOpen, setUploadOpen]     = React.useState(false)
   const [activeJobIds, setActiveJobIds] = React.useState<string[]>([])
@@ -620,6 +709,11 @@ export default function LibraryPage() {
     if (genreFilter !== "all" && t.genre !== genreFilter) return false
     return true
   })
+
+  React.useEffect(() => { setPage(1) }, [search, genreFilter])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const totalDuration = filtered.reduce((sum, t) => sum + t.durationSec, 0)
   const fmtTotal = (sec: number) => {
@@ -692,8 +786,7 @@ export default function LibraryPage() {
         </Badge>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
+      <div className="border-t border-ink-800">
           {loading ? (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
               <Music2 className="h-10 w-10 opacity-20 animate-pulse" />
@@ -728,39 +821,79 @@ export default function LibraryPage() {
               <p className="text-sm">No tracks match your filters</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">#</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Artist</TableHead>
-                  <TableHead>Album</TableHead>
-                  <TableHead>Genre</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Bitrate</TableHead>
-                  <TableHead>Size</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((track, i) => (
-                  <TableRow key={track.path}>
-                    <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell className="font-medium max-w-[180px] truncate">{track.title}</TableCell>
-                    <TableCell className="text-xs max-w-[140px] truncate">{track.artist}</TableCell>
-                    <TableCell className="text-xs max-w-[120px] truncate text-muted-foreground">{track.album || "—"}</TableCell>
-                    <TableCell>
-                      {track.genre ? <Badge variant="outline" className="text-[10px]">{track.genre}</Badge> : <span className="text-muted-foreground text-xs">—</span>}
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">{track.duration}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{track.bitrate || "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{track.size || "—"}</TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8">#</TableHead>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Artist</TableHead>
+                    <TableHead>Album</TableHead>
+                    <TableHead>Genre</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Bitrate</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead className="w-8" />
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {paginated.map((track, i) => (
+                    <TableRow key={track.path} className="group">
+                      <TableCell className="text-muted-foreground">{(page - 1) * PAGE_SIZE + i + 1}</TableCell>
+                      <TableCell className="font-medium max-w-[180px] truncate">{track.title}</TableCell>
+                      <TableCell className="text-xs max-w-[140px] truncate">{track.artist || <span className="text-muted-foreground/40">—</span>}</TableCell>
+                      <TableCell className="text-xs max-w-[120px] truncate text-muted-foreground">{track.album || "—"}</TableCell>
+                      <TableCell>
+                        {track.genre ? <Badge variant="outline" className="text-[10px]">{track.genre}</Badge> : <span className="text-muted-foreground text-xs">—</span>}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono">{track.duration}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{track.bitrate || "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{track.size || "—"}</TableCell>
+                      <TableCell>
+                        <button
+                          onClick={() => setEditTrack(track)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-ink-100"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-ink-800 px-2 py-3">
+                  <span className="text-xs text-muted-foreground">
+                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} / {filtered.length} track
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => setPage((p) => p - 1)}
+                      disabled={page === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs text-muted-foreground tabular-nums px-1">
+                      {page} / {totalPages}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => setPage((p) => p + 1)}
+                      disabled={page === totalPages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
-        </CardContent>
-      </Card>
+      </div>
 
       <FileUploadModal
         open={uploadOpen}
@@ -772,6 +905,12 @@ export default function LibraryPage() {
         open={ytOpen}
         onClose={() => setYtOpen(false)}
         onImportStarted={handleImportStarted}
+      />
+
+      <EditTrackDialog
+        track={editTrack}
+        onClose={() => setEditTrack(null)}
+        onSaved={(updated) => setTracks((prev) => prev.map((t) => t.id === updated.id ? updated : t))}
       />
     </div>
   )

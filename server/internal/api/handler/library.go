@@ -132,6 +132,26 @@ func (h *Library) Upload(c *fiber.Ctx) error {
 	return respond.OK(c, fiber.Map{"uploaded": results})
 }
 
+// Update godoc: PATCH /api/library/:id
+// Updates metadata overrides (title, artist, album, genre) for a track.
+func (h *Library) Update(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var body struct {
+		Title  string `json:"title"`
+		Artist string `json:"artist"`
+		Album  string `json:"album"`
+		Genre  string `json:"genre"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return respond.Error(c, fiber.StatusBadRequest, "invalid JSON")
+	}
+	track, err := h.Scanner.UpdateTrack(id, body.Title, body.Artist, body.Album, body.Genre)
+	if err != nil {
+		return respond.Error(c, fiber.StatusNotFound, err.Error())
+	}
+	return respond.OK(c, track)
+}
+
 // Scan godoc: POST /api/library/scan
 func (h *Library) Scan(c *fiber.Ctx) error {
 	go func() {

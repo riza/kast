@@ -192,6 +192,20 @@ export type APIAutoDJSession = {
   playlist_id: string
 }
 
+export type APIAutoDJTrackInfo = {
+  id:          string
+  title:       string
+  artist:      string
+  album:       string
+  duration_ms: number
+}
+
+export type APIAutoDJTracks = {
+  tracks:         APIAutoDJTrackInfo[]
+  now_playing_id: string
+  queue:          APIAutoDJTrackInfo[]
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Strip the leading slash so "/radio1" becomes "radio1" for URL construction. */
@@ -219,11 +233,27 @@ export type LoginResponse = {
   user: APIUser
 }
 
+export type APISettings = {
+  public_url:           string
+  http_addr:            string
+  cors_origins:         string[]
+  ssl_enabled:          boolean
+  ssl_auto_cert:        boolean
+  ssl_domains:          string[]
+  ssl_cert_file:        string
+  ssl_key_file:         string
+  hls_segment_duration: number
+  hls_playlist_size:    number
+  log_level:            "debug" | "info" | "warn" | "error"
+  log_format:           "text" | "json"
+}
+
 export type APIListener = {
   ip:           string
   mount:        string
   last_seen:    string
   country_code: string
+  user_agent:   string
 }
 
 export const api = {
@@ -260,6 +290,14 @@ export const api = {
   /** GET /api/listeners */
   listeners: {
     list: () => apiFetch<APIListener[]>("/api/listeners"),
+  },
+
+  /** GET /api/settings — PATCH /api/settings */
+  settings: {
+    get:    () => apiFetch<APISettings>("/api/settings"),
+    update: (body: APISettings) => apiFetch<APISettings>("/api/settings", {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
   },
 
   /** GET /api/autodj/sessions — all active sessions across mounts */
@@ -309,6 +347,28 @@ export const api = {
     skipTrack: (name: string) =>
       apiFetch<{ status: string }>(`/api/mounts/${slug(name)}/autodj/skip`, { method: "POST" }),
 
+    /** GET /api/mounts/{name}/autodj/tracks */
+    autoDJTracks: (name: string) =>
+      apiFetch<APIAutoDJTracks>(`/api/mounts/${slug(name)}/autodj/tracks`),
+
+    /** GET /api/mounts/{name}/autodj/history */
+    autoDJHistory: (name: string) =>
+      apiFetch<APIAutoDJTrackInfo[]>(`/api/mounts/${slug(name)}/autodj/history`),
+
+    /** POST /api/mounts/{name}/autodj/jump */
+    jumpToTrack: (name: string, index: number) =>
+      apiFetch<{ status: string; index: number }>(`/api/mounts/${slug(name)}/autodj/jump`, {
+        method: "POST",
+        body:   JSON.stringify({ index }),
+      }),
+
+    /** POST /api/mounts/{name}/autodj/queue */
+    insertNext: (name: string, trackId: string) =>
+      apiFetch<{ status: string }>(`/api/mounts/${slug(name)}/autodj/queue`, {
+        method: "POST",
+        body:   JSON.stringify({ track_id: trackId }),
+      }),
+
     /** GET /api/mounts/{name}/nowplaying */
     nowPlaying: (name: string) =>
       apiFetch<APINowPlaying>(`/api/mounts/${slug(name)}/nowplaying`),
@@ -318,6 +378,13 @@ export const api = {
     /** GET /api/library[?q=&genre=] */
     list: (params?: { q?: string; genre?: string }) =>
       apiFetch<APITrack[]>("/api/library" + buildQS(params)),
+
+    /** PATCH /api/library/:id — update metadata overrides */
+    update: (id: string, body: { title: string; artist: string; album: string; genre: string }) =>
+      apiFetch<APITrack>(`/api/library/${id}`, {
+        method: "PATCH",
+        body:   JSON.stringify(body),
+      }),
 
     /** POST /api/library/scan */
     scan: () =>

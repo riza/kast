@@ -93,6 +93,13 @@ func migrate(db *sql.DB) error {
 			playlist_id  TEXT NOT NULL,
 			mode         TEXT NOT NULL DEFAULT 'sequential'
 		)`,
+		`CREATE TABLE IF NOT EXISTS track_overrides (
+			path   TEXT PRIMARY KEY,
+			title  TEXT NOT NULL DEFAULT '',
+			artist TEXT NOT NULL DEFAULT '',
+			album  TEXT NOT NULL DEFAULT '',
+			genre  TEXT NOT NULL DEFAULT ''
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

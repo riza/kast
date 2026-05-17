@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Copy, Music2, SkipForward, Users, Palette } from "lucide-react"
+import { ArrowLeft, Copy, Music2, SkipForward, Users, Palette, Plus } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -16,7 +16,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import {
   api, type APINowPlaying, type PlayerConfigBody,
-  type APIPlaylist, type APIAutoDJSession,
+  type APIPlaylist, type APIAutoDJSession, type APIAutoDJTracks,
+  type APIAutoDJTrackInfo, type APIListener,
 } from "@/lib/api"
 import { type Mount, adaptApiMount, PulseDot, KBtn } from "../page"
 
@@ -53,10 +54,51 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   )
 }
 
+// ── Listener helpers (shared with listeners page) ──
+
+function isPrivate(ip: string): boolean {
+  return /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1$|^fd|^fc)/.test(ip)
+}
+function countryFlag(code: string): string {
+  if (!code || code.length !== 2) return ""
+  return [...code.toUpperCase()].map(c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)).join("")
+}
+function countryName(code: string): string {
+  try { return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code } catch { return code }
+}
+function timeAgo(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (diff < 5)  return "just now"
+  if (diff < 60) return `${diff}s ago`
+  return `${Math.floor(diff / 60)}m ago`
+}
+function parseUA(ua: string): string {
+  if (!ua) return "—"
+  const s = ua.toLowerCase()
+  if (s.includes("vlc"))             return "VLC"
+  if (s.includes("mpv"))             return "mpv"
+  if (s.includes("lavf"))            return "FFmpeg"
+  if (s.includes("liquidsoap"))      return "Liquidsoap"
+  if (s.startsWith("curl"))          return "cURL"
+  if (s.includes("python-requests")) return "Python"
+  if (s.includes("applecoremedia"))  return "AirPlay"
+  if (s.includes("itunes"))          return "iTunes"
+  if (s.includes("edg/"))            return "Edge"
+  if (s.includes("chrome"))          return "Chrome"
+  if (s.includes("firefox"))         return "Firefox"
+  if (s.includes("safari"))          return "Safari"
+  const first = ua.split(/[/ ]/)[0]
+  return first.length > 14 ? first.slice(0, 14) + "…" : first
+}
+
+function fmtDuration(ms: number): string {
+  return `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`
+}
+
 // ── Tabs ──
 
-function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying }: {
-  mount: Mount; nowPlaying: APINowPlaying; onRefreshNowPlaying: () => void
+function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying, history }: {
+  mount: Mount; nowPlaying: APINowPlaying; onRefreshNowPlaying: () => void; history: APIAutoDJTrackInfo[]
 }) {
   const base = streamBaseUrl().replace(/\/$/, "")
   const slug = mount.name.replace(/^\/+/, "")
@@ -138,24 +180,90 @@ function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying }: {
           <CopyRow label="Source input" value={`${base}/source/${slug}`} />
         </div>
       </div>
+
+      {/* Recently Played */}
+      {history.length > 0 && (
+        <>
+          <div className="border-t border-ink-800" />
+          <div>
+            <SectionLabel>Recently Played</SectionLabel>
+            <div className="space-y-1">
+              {history.map((t, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-md border border-ink-800 bg-ink-950/30">
+                  <span className="text-[11px] font-mono text-ink-600 w-4 shrink-0 text-right">{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[12px] text-ink-200">{t.title || "Unknown"}</p>
+                    <p className="truncate text-[11px] text-ink-500">{t.artist || "—"}</p>
+                  </div>
+                  {t.duration_ms > 0 && (
+                    <span className="text-[10.5px] font-mono text-ink-600 shrink-0">{fmtDuration(t.duration_ms)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
 function MountListenersTab({ mount }: { mount: Mount }) {
+  const [listeners, setListeners] = React.useState<APIListener[] | null>(null)
+
+  React.useEffect(() => {
+    const load = () =>
+      api.listeners.list()
+        .then((all) => setListeners(all.filter((l) => l.mount === mount.name)))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 5_000)
+    return () => clearInterval(id)
+  }, [mount.name])
+
+  const count = listeners?.length ?? mount.listeners
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <span className="inline-flex items-center gap-1.5 text-[12px] font-mono text-ink-300">
           <Users className="h-3.5 w-3.5 text-ink-500" />
-          {mount.listeners} listener{mount.listeners !== 1 ? "s" : ""} connected
+          {count} listener{count !== 1 ? "s" : ""} connected
         </span>
       </div>
-      <div className="flex flex-col items-center gap-2 py-10 text-ink-500">
-        <Users className="h-8 w-8 opacity-20" />
-        <p className="text-[12px]">Per-listener tracking not available</p>
-        <p className="text-[11px] text-ink-600">Only total connection count is reported</p>
-      </div>
+
+      {listeners === null ? (
+        <div className="py-10 flex items-center justify-center">
+          <div className="h-6 w-6 rounded-full border-2 border-ink-800 border-t-k-500 animate-spin" />
+        </div>
+      ) : listeners.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-10 text-ink-500">
+          <Users className="h-8 w-8 opacity-20" />
+          <p className="text-[12px]">No active listeners on this mount</p>
+        </div>
+      ) : (
+        <div className="border-t border-ink-800">
+          <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_80px_60px] gap-3 px-1 py-2 text-[10.5px] uppercase tracking-wider text-ink-500 font-mono border-b border-ink-800">
+            <div>IP</div><div>Location</div><div>Client</div><div className="text-right">Seen</div>
+          </div>
+          {listeners.map((l, i) => (
+            <div key={`${l.ip}-${i}`}
+              className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_80px_60px] gap-3 px-1 py-3 items-center border-b border-ink-800/60 last:border-0">
+              <span className="font-mono text-[12.5px] text-ink-100 truncate">{l.ip}</span>
+              <span className="text-[12px] font-mono truncate">
+                {isPrivate(l.ip)
+                  ? <span className="text-ink-500">Local</span>
+                  : l.country_code
+                    ? <span className="flex items-center gap-1.5"><span>{countryFlag(l.country_code)}</span><span className="text-ink-300">{countryName(l.country_code)}</span></span>
+                    : <span className="text-ink-600">—</span>
+                }
+              </span>
+              <span className="font-mono text-[11.5px] text-ink-400 truncate" title={l.user_agent || undefined}>{parseUA(l.user_agent)}</span>
+              <span className="text-right text-[11px] text-ink-500 font-mono">{timeAgo(l.last_seen)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -309,6 +417,8 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
   const [mode, setMode]                         = React.useState("shuffle")
   const [loading, setLoading]                   = React.useState(true)
   const [acting, setActing]                     = React.useState(false)
+  const [trackData, setTrackData]               = React.useState<APIAutoDJTracks | null>(null)
+  const nowPlayingRowRef                        = React.useRef<HTMLDivElement | null>(null)
 
   React.useEffect(() => {
     Promise.all([api.playlists.list(), api.mounts.autoDJStatus(mount.name).catch(() => null)])
@@ -318,6 +428,20 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
 
   const isRunning      = !!session
   const activePlaylist = playlists.find((p) => p.id === session?.playlist_id)
+
+  React.useEffect(() => {
+    if (!isRunning) { setTrackData(null); return }
+    const load = () => api.mounts.autoDJTracks(mount.name).then(setTrackData).catch(() => {})
+    load()
+    const id = setInterval(load, 5_000)
+    return () => clearInterval(id)
+  }, [isRunning, mount.name])
+
+  React.useEffect(() => {
+    if (nowPlayingRowRef.current) {
+      nowPlayingRowRef.current.scrollIntoView({ block: "nearest" })
+    }
+  }, [trackData?.now_playing_id])
 
   const handleStart = () => {
     if (!selectedPlaylist) return
@@ -370,6 +494,94 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
           {isRunning ? "Running" : "Stopped"}
         </span>
       </div>
+
+      {/* Playlist browser */}
+      {isRunning && trackData && trackData.tracks.length > 0 && (
+        <div className="space-y-1.5">
+          <SectionLabel>Playlist ({trackData.tracks.length} tracks)</SectionLabel>
+          <div className="rounded-md border border-ink-800 overflow-hidden">
+            <div className="max-h-64 overflow-y-auto">
+              {trackData.tracks.map((t, i) => {
+                const isNow = t.id === trackData.now_playing_id
+                return (
+                  <div
+                    key={t.id + i}
+                    ref={isNow ? nowPlayingRowRef : null}
+                    className={cn(
+                      "group relative flex items-center gap-2 px-3 py-2 border-b border-ink-800/50 last:border-0",
+                      isNow ? "bg-k-500/10" : "hover:bg-ink-800/40"
+                    )}
+                  >
+                    <span className={cn("text-[10.5px] font-mono w-5 shrink-0 text-right", isNow ? "text-k-400" : "text-ink-600")}>
+                      {isNow ? <Music2 className="h-3 w-3 text-k-400 inline" /> : i + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("truncate text-[12px]", isNow ? "text-k-300 font-medium" : "text-ink-200")}>{t.title || "Unknown"}</p>
+                      <p className="truncate text-[10.5px] text-ink-500">{t.artist || "—"}</p>
+                    </div>
+                    {t.duration_ms > 0 && (
+                      <span className="text-[10.5px] font-mono text-ink-600 shrink-0 group-hover:opacity-0 transition-opacity">
+                        {fmtDuration(t.duration_ms)}
+                      </span>
+                    )}
+                    <div className="absolute right-2 inset-y-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        title="Jump to this track"
+                        onClick={() =>
+                          api.mounts.jumpToTrack(mount.name, i)
+                            .then(() => {
+                              toast.success(`Jumping to "${t.title || "track"}"`)
+                              setTimeout(() => api.mounts.autoDJTracks(mount.name).then(setTrackData).catch(() => {}), 700)
+                            })
+                            .catch((err) => toast.error(`Jump failed: ${err.message}`))
+                        }
+                        className="h-6 px-2 rounded bg-ink-700 hover:bg-k-500 text-ink-200 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                      >
+                        <SkipForward className="h-3 w-3" /> Jump
+                      </button>
+                      <button
+                        title="Play after current track"
+                        onClick={() =>
+                          api.mounts.insertNext(mount.name, t.id)
+                            .then(() => {
+                              toast.success(`Queued "${t.title || "track"}"`)
+                              api.mounts.autoDJTracks(mount.name).then(setTrackData).catch(() => {})
+                            })
+                            .catch((err) => toast.error(`Queue failed: ${err.message}`))
+                        }
+                        className="h-6 px-2 rounded bg-ink-700 hover:bg-ink-600 text-ink-200 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                      >
+                        <Plus className="h-3 w-3" /> Next
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* One-shot queue */}
+          {trackData.queue.length > 0 && (
+            <div className="mt-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-500 font-mono mb-1">Up Next (one-shot)</p>
+              <div className="rounded-md border border-ink-800/60 bg-ink-950/30 divide-y divide-ink-800/40">
+                {trackData.queue.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-[10.5px] font-mono text-ink-600 w-4 shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-[11.5px] text-ink-300">{t.title || "Unknown"}</p>
+                      <p className="truncate text-[10.5px] text-ink-500">{t.artist || "—"}</p>
+                    </div>
+                    {t.duration_ms > 0 && (
+                      <span className="text-[10.5px] font-mono text-ink-600 shrink-0">{fmtDuration(t.duration_ms)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Playlist */}
       <div className="space-y-1.5">
@@ -477,10 +689,11 @@ export default function MountDetailPage() {
   const router = useRouter()
   const mountName = "/" + params.name
 
-  const [mount, setMount]         = React.useState<Mount | null>(null)
+  const [mount, setMount]           = React.useState<Mount | null>(null)
   const [nowPlaying, setNowPlaying] = React.useState<APINowPlaying>(null)
-  const [loading, setLoading]     = React.useState(true)
-  const [error, setError]         = React.useState<string | null>(null)
+  const [history, setHistory]       = React.useState<APIAutoDJTrackInfo[]>([])
+  const [loading, setLoading]       = React.useState(true)
+  const [error, setError]           = React.useState<string | null>(null)
 
   React.useEffect(() => {
     api.mounts.get(mountName)
@@ -494,6 +707,14 @@ export default function MountDetailPage() {
     const load = () => api.mounts.nowPlaying(mount.name).then(setNowPlaying).catch(() => {})
     load()
     const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [mount?.name])
+
+  React.useEffect(() => {
+    if (!mount) return
+    const load = () => api.mounts.autoDJHistory(mount.name).then(setHistory).catch(() => {})
+    load()
+    const id = setInterval(load, 10_000)
     return () => clearInterval(id)
   }, [mount?.name])
 
@@ -565,6 +786,7 @@ export default function MountDetailPage() {
                 mount={mount}
                 nowPlaying={nowPlaying}
                 onRefreshNowPlaying={() => api.mounts.nowPlaying(mount.name).then(setNowPlaying).catch(() => {})}
+                history={history}
               />
             </TabsContent>
             <TabsContent value="autodj">

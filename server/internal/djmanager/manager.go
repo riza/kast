@@ -296,6 +296,42 @@ func (m *Manager) pushHistory(mountName string, t *library.Track) {
 	m.history[mountName] = updated
 }
 
+// InsertNext queues t to play immediately after the current track on mountName.
+func (m *Manager) InsertNext(mountName string, t *library.Track) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[mountName]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("djmanager: no active session for %s", mountName)
+	}
+	sess.player.InsertNext(t)
+	return nil
+}
+
+// JumpTo sets playback on mountName to tracks[index] immediately.
+func (m *Manager) JumpTo(mountName string, index int) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[mountName]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("djmanager: no active session for %s", mountName)
+	}
+	sess.player.JumpTo(index)
+	return nil
+}
+
+// Tracks returns the active session's player track list, now-playing ID, and queue.
+// Returns nil tracks if no session is running.
+func (m *Manager) Tracks(mountName string) (tracks []*library.Track, nowPlayingID string, queue []*library.Track) {
+	m.mu.Lock()
+	sess, ok := m.sessions[mountName]
+	m.mu.Unlock()
+	if !ok {
+		return nil, "", nil
+	}
+	return sess.player.Tracks()
+}
+
 // RecentTracks returns a snapshot of the last 10 tracks played on mountName
 // (newest first). Returns nil if there is no history.
 func (m *Manager) RecentTracks(mountName string) []*library.Track {
