@@ -68,11 +68,10 @@ function cx(...a: (string | false | null | undefined)[]) {
 
 function getServerBase() {
   if (typeof window === "undefined") return ""
-  return (
-    localStorage.getItem("kast_api_url") ??
-    process.env.NEXT_PUBLIC_API_URL ??
-    "http://localhost:8080"
-  ).replace(/\/$/, "")
+  const stored = localStorage.getItem("kast_api_url")
+  if (stored) return stored.replace(/\/$/, "")
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+  return "" // relative URLs → proxied through Next.js
 }
 
 // ── SVG icons ──────────────────────────────────────────────────────────────
@@ -499,7 +498,7 @@ export default function ListenPage({
   const hlsRef   = React.useRef<Hls | null>(null)
 
   const [station, setStation]       = React.useState<StationInfo | null>(null)
-  const [serverBase, setServerBase] = React.useState("")
+  const [serverBase, setServerBase] = React.useState<string | null>(null)
   const [playing, setPlaying]       = React.useState(false)
   const [loading, setLoading]       = React.useState(false)
   const [hlsError, setHlsError]     = React.useState<string | null>(null)
@@ -510,8 +509,8 @@ export default function ListenPage({
 
   React.useEffect(() => { setServerBase(getServerBase()) }, [])
 
-  const hlsUrl    = serverBase ? `${serverBase}/hls/${mount}/index.m3u8` : ""
-  const publicUrl = serverBase ? `${serverBase}/public/${mount}` : ""
+  const hlsUrl    = serverBase !== null ? `${serverBase}/hls/${mount}/index.m3u8` : ""
+  const publicUrl = serverBase !== null ? `${serverBase}/public/${mount}` : ""
 
   // Poll station info
   React.useEffect(() => {
@@ -528,7 +527,7 @@ export default function ListenPage({
 
   // Poll history every 10s
   React.useEffect(() => {
-    if (!serverBase) return
+    if (serverBase === null) return
     const load = () =>
       fetch(`${serverBase}/public/${mount}/history`)
         .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -541,7 +540,7 @@ export default function ListenPage({
 
   // Fetch playlist whenever station changes (playlist_id may change)
   React.useEffect(() => {
-    if (!serverBase) return
+    if (serverBase === null) return
     fetch(`${serverBase}/public/${mount}/playlist`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data: PlaylistInfo) => setPlaylist(data?.tracks?.length ? data : null))
