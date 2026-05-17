@@ -266,7 +266,7 @@ func (m *Manager) VerifySourcePassword(name, password string) bool {
 	return diff == 0
 }
 
-// storageMount is the on-disk representation (includes hashed secret).
+// storageMount is the on-disk representation (includes source password).
 type storageMount struct {
 	Mount
 	SourcePassword string `json:"source_password"`
@@ -306,6 +306,7 @@ func (m *Manager) load() error {
 	for i := range list {
 		mt := list[i].Mount
 		mt.SourcePassword = list[i].SourcePassword
+		mt.Listeners = 0 // runtime state, not persisted reliably
 		m.mounts[mt.Name] = &mt
 	}
 	return nil

@@ -105,14 +105,16 @@ func NewApp(
 	// ── HLS streaming — unauthenticated, high-volume ─────────────────────────
 	listenerTrack := newListenerTracker(30 * time.Second)
 
-	// Background sweep: expire stale listener entries and push the updated
-	// counts back to the mount manager so idle mounts read 0, not a stale value.
+	// Background sweep: expire stale entries and push counts to every mount.
+	// Iterating all mounts (not just those in the tracker) ensures a mount
+	// with no recent requests gets written as 0, not left at a stale value.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			for mountName, count := range listenerTrack.sweep() {
-				mounts.SetListeners(mountName, count)
+			counts := listenerTrack.sweep()
+			for _, mt := range mounts.List() {
+				mounts.SetListeners(mt.Name, counts[mt.Name])
 			}
 		}
 	}()
