@@ -14,6 +14,15 @@ function getServerBase() {
   ).replace(/\/$/, "")
 }
 
+const WEAK_PASSWORDS = new Set([
+  "admin", "password", "123456", "12345678", "1234", "test",
+  "changeme", "changeme123", "pass", "qwerty", "letmein", "welcome",
+])
+
+function isWeakCredential(username: string, password: string) {
+  return username === password || WEAK_PASSWORDS.has(password.toLowerCase())
+}
+
 type Mode = "loading" | "setup" | "login"
 
 export default function LoginPage() {
@@ -24,6 +33,7 @@ export default function LoginPage() {
   const [confirm,  setConfirm]  = React.useState("")
   const [error, setError]       = React.useState<string | null>(null)
   const [loading, setLoading]   = React.useState(false)
+  const [weakWarn, setWeakWarn] = React.useState(false)
 
   React.useEffect(() => {
     if (isLoggedIn()) { router.replace("/dashboard"); return }
@@ -34,15 +44,8 @@ export default function LoginPage() {
       .catch(() => setMode("login"))
   }, [router])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-
-    if (mode === "setup" && password !== confirm) {
-      setError("Passwords do not match.")
-      return
-    }
-
+  const doSubmit = async () => {
+    setWeakWarn(false)
     setLoading(true)
     try {
       const base = getServerBase()
@@ -64,6 +67,23 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    if (mode === "setup" && password !== confirm) {
+      setError("Passwords do not match.")
+      return
+    }
+
+    if (!weakWarn && isWeakCredential(username, password)) {
+      setWeakWarn(true)
+      return
+    }
+
+    doSubmit()
   }
 
   if (mode === "loading") {
@@ -137,6 +157,30 @@ export default function LoginPage() {
                 onChange={(e) => setConfirm(e.target.value)}
                 className="w-full bg-ink-900 border border-ink-700 text-ink-100 px-3 py-2.5 text-[13.5px] font-mono outline-none focus:border-k-500 transition-colors"
               />
+            </div>
+          )}
+
+          {weakWarn && (
+            <div className="border border-amber-500/30 bg-amber-500/5 px-3 py-3 space-y-2">
+              <p className="text-[12px] text-amber-400 font-mono">
+                This is a commonly used credential. Anyone who knows your username can guess it.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={doSubmit}
+                  className="text-[11px] font-mono text-amber-400 border border-amber-500/30 px-2.5 py-1 hover:bg-amber-500/10 transition-colors"
+                >
+                  Use anyway
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setWeakWarn(false); setPassword(""); setConfirm("") }}
+                  className="text-[11px] font-mono text-ink-400 border border-ink-700 px-2.5 py-1 hover:bg-ink-800 transition-colors"
+                >
+                  Change password
+                </button>
+              </div>
             </div>
           )}
 
