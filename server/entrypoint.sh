@@ -1,0 +1,51 @@
+#!/bin/sh
+set -e
+
+CONFIG=/app/config/kast.toml
+
+# Create config from example on first run
+if [ ! -f "$CONFIG" ]; then
+    echo "[kast] No config found — creating from example..."
+    cp /app/kast.example.toml "$CONFIG"
+fi
+
+# Replace a TOML string field value in-place.
+set_toml_string() {
+    local key="$1" val="$2"
+    sed -i "s|^${key} *= *\"[^\"]*\"|${key} = \"${val}\"|" "$CONFIG"
+}
+
+# Auto-generate api_key if still at the default placeholder
+if grep -q '"CHANGE_ME_BEFORE_PRODUCTION"' "$CONFIG"; then
+    if [ -n "$KAST_API_KEY" ]; then
+        GEN_KEY="$KAST_API_KEY"
+    else
+        GEN_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+        echo "[kast] =================================================="
+        echo "[kast]  Generated API key: $GEN_KEY"
+        echo "[kast]  Enter this in Dashboard → Settings → Connection"
+        echo "[kast] =================================================="
+    fi
+    set_toml_string "api_key" "$GEN_KEY"
+fi
+
+# Auto-generate jwt_secret if empty
+if grep -qE '^jwt_secret = ""' "$CONFIG"; then
+    if [ -n "$KAST_JWT_SECRET" ]; then
+        GEN_JWT="$KAST_JWT_SECRET"
+    else
+        GEN_JWT=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    fi
+    set_toml_string "jwt_secret" "$GEN_JWT"
+fi
+
+# Apply optional env var overrides
+if [ -n "$KAST_PUBLIC_URL" ]; then
+    set_toml_string "public_url" "$KAST_PUBLIC_URL"
+fi
+
+if [ -n "$KAST_CORS_ORIGINS" ]; then
+    sed -i "s|^cors_origins = \[.*\]|cors_origins = [\"${KAST_CORS_ORIGINS}\"]|" "$CONFIG"
+fi
+
+exec "$@"
