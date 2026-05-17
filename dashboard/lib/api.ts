@@ -1,7 +1,7 @@
 // Typed fetch client for the Kast server API.
-// Priority: localStorage → NEXT_PUBLIC_* build-time env vars → defaults.
-// This lets users set the API URL and key from the Settings page without
-// rebuilding the Docker image.
+// Priority: localStorage → NEXT_PUBLIC_* env vars → empty (uses Next.js rewrites).
+// When no URL is stored or configured, requests use relative paths so they are
+// transparently proxied to the server by the Next.js rewrite rules in next.config.mjs.
 
 const LS_URL_KEY   = "kast_api_url"
 const LS_KEY_KEY   = "kast_api_key"
@@ -12,7 +12,7 @@ function getBase(): string {
     const stored = localStorage.getItem(LS_URL_KEY)
     if (stored) return stored.replace(/\/$/, "")
   }
-  return (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/$/, "")
+  return (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "")
 }
 
 // JWT token takes priority over static API key.
@@ -36,7 +36,7 @@ export function saveConnectionSettings(url: string, key: string) {
 export function loadConnectionSettings(): { url: string; key: string } {
   if (typeof window === "undefined") return { url: "", key: "" }
   return {
-    url: localStorage.getItem(LS_URL_KEY) ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+    url: localStorage.getItem(LS_URL_KEY) ?? process.env.NEXT_PUBLIC_API_URL ?? "",
     key: localStorage.getItem(LS_KEY_KEY) ?? process.env.NEXT_PUBLIC_API_KEY ?? "",
   }
 }

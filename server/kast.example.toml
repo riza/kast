@@ -17,7 +17,9 @@ cors_origins = ["http://localhost:3000"]
 [admin]
 # API key required for all /api/* requests.
 # Generate with: openssl rand -hex 32
-api_key = "CHANGE_ME_BEFORE_PRODUCTION"
+api_key    = "CHANGE_ME_BEFORE_PRODUCTION"
+# Secret used to sign JWT tokens. Generate with: openssl rand -hex 32
+jwt_secret = ""
 
 [hls]
 # Length of each HLS segment in seconds (4-10 recommended)

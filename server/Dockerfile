@@ -33,11 +33,13 @@ USER kast
 WORKDIR /app
 COPY --from=builder /kast /app/kast
 COPY --chown=kast kast.example.toml /app/kast.example.toml
+COPY --chown=kast entrypoint.sh /app/entrypoint.sh
 
-# Data directories (created as kast user)
-RUN mkdir -p data/music data/hls data/mounts data/playlists
+# Data and config directories (created as kast user so named volumes inherit ownership)
+RUN chmod +x /app/entrypoint.sh && \
+    mkdir -p config data/music data/hls data/mounts data/playlists
 
 EXPOSE 8080 443
 
-ENTRYPOINT ["/app/kast"]
-CMD ["-config", "/app/kast.toml"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/kast", "-config", "/app/config/kast.toml"]
