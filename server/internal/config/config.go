@@ -29,10 +29,8 @@ type ServerConfig struct {
 }
 
 type AdminConfig struct {
-	APIKey       string `toml:"api_key"`
-	JWTSecret    string `toml:"jwt_secret"`
-	InitialUser  string `toml:"initial_user"`
-	InitialPass  string `toml:"initial_pass"`
+	APIKey    string `toml:"api_key"`
+	JWTSecret string `toml:"jwt_secret"`
 }
 
 type SSLConfig struct {
@@ -93,12 +91,6 @@ func (c *Config) validate() error {
 	}
 	if c.Admin.JWTSecret == "" {
 		errs = append(errs, "admin.jwt_secret must not be empty")
-	}
-	if c.Admin.InitialUser == "" {
-		c.Admin.InitialUser = "admin"
-	}
-	if c.Admin.InitialPass == "" {
-		c.Admin.InitialPass = "changeme123"
 	}
 	if c.Server.HTTPAddr == "" {
 		c.Server.HTTPAddr = ":8080"

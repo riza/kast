@@ -58,9 +58,6 @@ func run() error {
 	defer database.Close()
 
 	auth := authmanager.New(database, cfg.Admin.JWTSecret)
-	if err := auth.EnsureAdmin(cfg.Admin.InitialUser, cfg.Admin.InitialPass); err != nil {
-		return fmt.Errorf("auth: ensure admin: %w", err)
-	}
 
 	// ── Core services ────────────────────────────────────────────────────────
 	mounts, err := mount.NewManager(filepath.Join(dataDir, "mounts"))

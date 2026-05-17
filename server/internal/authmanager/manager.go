@@ -50,21 +50,28 @@ func New(db *sql.DB, secret string) *Manager {
 	return &Manager{db: db, secret: []byte(secret)}
 }
 
-// EnsureAdmin creates the given user as admin if no users exist yet.
-// This is called once on startup so the first run always has an admin account.
-func (m *Manager) EnsureAdmin(username, password string) error {
+// IsSetupRequired returns true if no users exist yet (first run).
+func (m *Manager) IsSetupRequired() bool {
 	var count int
-	if err := m.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
-		return err
+	m.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	return count == 0
+}
+
+// Setup creates the first admin account. Returns an error if any user already exists.
+func (m *Manager) Setup(username, password string) (string, *User, error) {
+	if !m.IsSetupRequired() {
+		return "", nil, errors.New("setup already completed")
 	}
-	if count > 0 {
-		return nil
+	user, err := m.CreateUser(username, password, RoleAdmin)
+	if err != nil {
+		return "", nil, err
 	}
-	if _, err := m.CreateUser(username, password, RoleAdmin); err != nil {
-		return fmt.Errorf("authmanager: create initial admin: %w", err)
+	slog.Info("authmanager: first admin created via setup", "username", username)
+	token, err := m.sign(user)
+	if err != nil {
+		return "", nil, err
 	}
-	slog.Info("authmanager: created initial admin user", "username", username)
-	return nil
+	return token, user, nil
 }
 
 // Login verifies credentials and returns a signed JWT on success.

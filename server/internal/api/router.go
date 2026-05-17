@@ -336,6 +336,8 @@ func NewApp(
 
 	// ── Auth endpoints — public ─────────────────────────────────────────────
 	authH := &handler.Auth{Manager: auth}
+	app.Get("/api/auth/setup", authH.SetupStatus)
+	app.Post("/api/auth/setup", authH.Setup)
 	app.Post("/api/auth/login", authH.Login)
 
 	// ── Admin API — Bearer token required ───────────────────────────────────
