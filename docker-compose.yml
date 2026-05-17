@@ -12,7 +12,6 @@ services:
         BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "8080:8080"
-      - "443:443"
     volumes:
       - kast_config:/app/config
       - ./server/data/music:/app/data/music
