@@ -2,15 +2,22 @@
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS    := -X github.com/riza/kast/internal/version.Version=$(VERSION) \
+              -X github.com/riza/kast/internal/version.GitCommit=$(GIT_COMMIT) \
+              -X github.com/riza/kast/internal/version.BuildTime=$(BUILD_TIME)
+
 all: build
 
 build: server dashboard
 
 server:
-	cd server && go build -o ../bin/kast ./cmd/kast
+	cd server && go build -ldflags="$(LDFLAGS)" -o ../bin/kast ./cmd/kast
 
 dashboard:
-	cd dashboard && npm run build
+	cd dashboard && GIT_COMMIT=$(GIT_COMMIT) npm run build
 
 # ── Development ───────────────────────────────────────────────────────────────
 

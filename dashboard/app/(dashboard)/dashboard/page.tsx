@@ -5,6 +5,9 @@ import Link from "next/link"
 import { api, type APIStatus, type APIMount } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
+const FE_COMMIT  = process.env.NEXT_PUBLIC_GIT_COMMIT ?? "unknown"
+const FE_VERSION = process.env.NEXT_PUBLIC_VERSION    ?? "dev"
+
 // ── Helpers ──
 
 function formatUptime(sec: number): string {
@@ -21,6 +24,47 @@ function PulseDot({ className }: { className?: string }) {
     <span
       className={cn("inline-block w-1.5 h-1.5 rounded-full pulse-dot shrink-0", className)}
     />
+  )
+}
+
+// ── Build info ──
+
+function BuildInfo({ status }: { status: APIStatus }) {
+  const serverCommit  = status.git_commit ?? "unknown"
+  const match = serverCommit !== "unknown" && FE_COMMIT !== "unknown" && serverCommit === FE_COMMIT
+
+  const rows = [
+    { label: "server",   value: `${status.version} · ${serverCommit}` },
+    { label: "dashboard", value: `${FE_VERSION} · ${FE_COMMIT}` },
+    { label: "runtime",  value: status.go_version },
+    { label: "uptime",   value: formatUptime(status.uptime_sec) },
+    { label: "platform", value: status.os_arch },
+  ]
+
+  return (
+    <div className="border-t border-ink-800 text-[12.5px] font-mono">
+      {/* Commit match banner */}
+      <div className={cn(
+        "flex items-center gap-2 py-2 border-b border-ink-800/60",
+        match ? "text-emerald-400" : "text-amber-400"
+      )}>
+        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", match ? "bg-emerald-500" : "bg-amber-400")} />
+        {match
+          ? <span>Server and dashboard are in sync <span className="text-ink-600">({serverCommit})</span></span>
+          : <span>Version mismatch — server <span className="text-ink-300">{serverCommit}</span> · dashboard <span className="text-ink-300">{FE_COMMIT}</span></span>
+        }
+      </div>
+
+      {rows.map((r, i) => (
+        <div key={r.label} className={cn(
+          "grid grid-cols-[90px_minmax(0,1fr)] gap-4 py-2",
+          i < rows.length - 1 && "border-b border-ink-800/60"
+        )}>
+          <span className="text-ink-500">{r.label}</span>
+          <span className="text-ink-300">{r.value}</span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -171,24 +215,11 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* Recent events placeholder */}
+      {/* Build info */}
       {apiStatus && (
         <div className="mt-9">
-          <h2 className="text-[11px] font-medium text-ink-500 uppercase tracking-wider font-mono mb-3">Server</h2>
-          <div className="border-t border-ink-800 text-[12.5px] font-mono">
-            <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-4 py-2 border-b border-ink-800/60">
-              <span className="text-ink-500">version</span>
-              <span className="text-ink-300">{apiStatus.version}</span>
-            </div>
-            <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-4 py-2 border-b border-ink-800/60">
-              <span className="text-ink-500">runtime</span>
-              <span className="text-ink-300">{apiStatus.go_version}</span>
-            </div>
-            <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-4 py-2">
-              <span className="text-ink-500">uptime</span>
-              <span className="text-ink-300">{formatUptime(apiStatus.uptime_sec)}</span>
-            </div>
-          </div>
+          <h2 className="text-[11px] font-medium text-ink-500 uppercase tracking-wider font-mono mb-3">Build</h2>
+          <BuildInfo status={apiStatus} />
         </div>
       )}
     </div>

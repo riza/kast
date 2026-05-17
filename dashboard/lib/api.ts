@@ -82,6 +82,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type APIStatus = {
   version:    string
+  git_commit: string
+  build_time: string
   uptime_sec: number
   go_version: string
   os_arch:    string
