@@ -3,6 +3,10 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+      args:
+        VERSION:    dev
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "8080:8080"
     volumes:
@@ -12,6 +16,7 @@ services:
       - ./server/data/mounts:/app/data/mounts
       - ./server/data/library:/app/data/library
       - ./server/data/playlists:/app/data/playlists
+      - ./server/data/kast.db:/app/data/kast.db
     restart: unless-stopped
     environment:
       - GOGC=100
@@ -23,14 +28,12 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount source — changes on host reflect immediately inside container
       - ./dashboard:/app
-      # Isolate node_modules inside the container (don't overwrite host copy)
       - /app/node_modules
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_API_KEY=CHANGE_ME_BEFORE_PRODUCTION
-      - WATCHPACK_POLLING=true   # needed for file-change detection in Docker
+      - WATCHPACK_POLLING=true
     depends_on:
       - server
     restart: unless-stopped
