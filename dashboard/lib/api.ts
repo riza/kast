@@ -273,8 +273,7 @@ export const api = {
         body:    JSON.stringify({ username, password }),
       }).then(async (r) => {
         if (!r.ok) throw new APIError(r.status, "invalid credentials")
-        const data = await r.json()
-        return data.data as LoginResponse
+        return r.json() as Promise<LoginResponse>
       }),
 
     /** GET /api/auth/me */

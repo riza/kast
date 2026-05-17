@@ -30,7 +30,7 @@ export default function LoginPage() {
     const base = getServerBase()
     fetch(`${base}/api/auth/setup`)
       .then((r) => r.json())
-      .then((d) => setMode(d.data?.required ? "setup" : "login"))
+      .then((d) => setMode(d.required ? "setup" : "login"))
       .catch(() => setMode("login"))
   }, [router])
 
@@ -57,7 +57,7 @@ export default function LoginPage() {
         setError(json.error ?? "Something went wrong.")
         return
       }
-      setToken(json.data.token)
+      setToken(json.token)
       router.replace("/dashboard")
     } catch {
       setError("Could not connect to server.")
