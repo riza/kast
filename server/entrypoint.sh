@@ -3,6 +3,21 @@ set -e
 
 CONFIG=/app/config/kast.toml
 
+# ── Ensure data directories exist and are writable ─────────────────────────
+# Named volumes created by Docker get the base image permissions (777), but
+# bind mounts (docker-compose) inherit the host's ownership. Attempt to fix
+# permissions and warn if a directory is still not writable.
+for d in data/music data/hls data/mounts data/playlists; do
+    mkdir -p "/app/$d" 2>/dev/null || true
+    chmod 777 "/app/$d" 2>/dev/null || true
+    if [ ! -w "/app/$d" ]; then
+        echo "[kast] WARNING: /app/$d is not writable!"
+        echo "[kast]   If you are using bind mounts, run on the host:"
+        echo "[kast]     chmod 777 $(pwd)/$d"
+        echo "[kast]   or match the container uid (1001) to the host directory owner."
+    fi
+done
+
 # Create config from example on first run
 if [ ! -f "$CONFIG" ]; then
     echo "[kast] No config found — creating from example..."

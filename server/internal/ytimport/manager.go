@@ -119,6 +119,7 @@ func (m *Manager) Preview(ctx context.Context, rawURL string) (*PreviewResult, e
 		"yt-dlp",
 		"--flat-playlist",
 		"--dump-json",
+		"--js-runtimes", "node",
 		rawURL,
 	)
 	var stderr strings.Builder
@@ -310,6 +311,7 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 		"--newline",
 		"--no-playlist",
 		"--windows-filenames",
+		"--js-runtimes", "node",
 		"--print", "after_move:filepath",
 		videoURL,
 	)

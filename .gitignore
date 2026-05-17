@@ -56,4 +56,5 @@ next-env.d.ts
 
 .env.prod.json
 TODO.md
+TODO2.md
 *.db

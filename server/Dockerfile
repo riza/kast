@@ -20,24 +20,37 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /kast ./cmd/kast
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.21
 
-# ffmpeg for audio processing; yt-dlp from PyPI (Alpine package is too old for YouTube)
-RUN apk add --no-cache ffmpeg ca-certificates python3 py3-pip && \
+# ffmpeg for audio processing; yt-dlp from PyPI (Alpine package is too old for YouTube).
+# nodejs provides the JavaScript runtime yt-dlp now requires for YouTube extraction.
+RUN apk add --no-cache ffmpeg ca-certificates python3 py3-pip nodejs && \
     pip3 install --break-system-packages --no-cache-dir yt-dlp
 
-# Run as non-root user
+# Create kast user but stay as root for now — data dirs must be created
+# before dropping privileges so that volumes initialised by Docker inherit
+# the correct ownership.
 RUN adduser -D -u 1001 kast
-USER kast
 
 WORKDIR /app
 COPY --from=builder /kast /app/kast
 COPY --chown=kast kast.example.toml /app/kast.example.toml
 COPY --chown=kast entrypoint.sh /app/entrypoint.sh
 
-# Data and config directories (created as kast user so named volumes inherit ownership)
+# yt-dlp config: tell it to use the nodejs JavaScript runtime (installed above).
+RUN mkdir -p /home/kast/.config/yt-dlp && \
+    echo '--js-runtimes node' > /home/kast/.config/yt-dlp/config && \
+    chown -R kast:kast /home/kast/.config
+
+# Create data and config directories as root so Docker volumes get the right
+# base ownership. chmod 777 keeps them writable regardless of the uid that
+# ends up running the container.
 RUN chmod +x /app/entrypoint.sh && \
-    mkdir -p config data/music data/hls data/mounts data/playlists
+    mkdir -p config data/music data/hls data/mounts data/playlists && \
+    chmod 777 data/music data/hls data/mounts data/playlists
+
+# Drop to non-root user for runtime.
+USER kast
 
 EXPOSE 8080 443
 
