@@ -12,11 +12,13 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
   Plus, ListMusic, Trash2, Search, Check, Play, GripVertical,
+  Loader2, CheckCircle2, XCircle,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import {
   api, type APIPlaylist, type APIMount, type APITrack, type APIAutoDJSession,
+  type APIImportItem, type APIImportJob,
 } from "@/lib/api"
 
 // ── Types ──
@@ -393,6 +395,334 @@ function PlaylistDetail({ playlist, library, onChange, onDelete }: {
   )
 }
 
+// ── YouTube icon ──
+
+function YtIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+    </svg>
+  )
+}
+
+// ── YouTube → Playlist Dialog ──
+
+type YTStep = "input" | "preview" | "downloading"
+
+function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  onCreated: (playlist: Playlist) => void
+}) {
+  const [step, setStep]                 = React.useState<YTStep>("input")
+  const [url, setUrl]                   = React.useState("")
+  const [playlistName, setPlaylistName] = React.useState("")
+  const [previewing, setPreviewing]     = React.useState(false)
+  const [preview, setPreview]           = React.useState<{ type: string; title: string; items: APIImportItem[] } | null>(null)
+  const [selected, setSelected]         = React.useState<Set<string>>(new Set())
+  const [jobId, setJobId]               = React.useState<string | null>(null)
+  const [jobItems, setJobItems]         = React.useState<APIImportItem[]>([])
+  const [creating, setCreating]         = React.useState(false)
+
+  const reset = () => {
+    setStep("input"); setUrl(""); setPlaylistName(""); setPreviewing(false)
+    setPreview(null); setSelected(new Set()); setJobId(null); setJobItems([]); setCreating(false)
+  }
+
+  const handleClose = () => { reset(); onOpenChange(false) }
+
+  const handlePreview = async () => {
+    if (!url.trim()) return
+    setPreviewing(true)
+    try {
+      const result = await api.library.ytPreview(url.trim())
+      setPreview(result)
+      setSelected(new Set(result.items.map((i) => i.ytid)))
+      if (result.title && !playlistName.trim()) setPlaylistName(result.title)
+      setStep("preview")
+    } catch (err: unknown) {
+      toast.error(`Preview failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const handleStartDownload = async () => {
+    if (!preview) return
+    const items = preview.items.filter((i) => selected.has(i.ytid))
+    if (items.length === 0) { toast.error("Select at least one track"); return }
+    if (!playlistName.trim()) { toast.error("Playlist name is required"); return }
+    setStep("downloading")
+    try {
+      const { job_id } = await api.library.ytImport({ items })
+      setJobId(job_id)
+    } catch (err: unknown) {
+      toast.error(`Failed to start: ${err instanceof Error ? err.message : String(err)}`)
+      setStep("preview")
+    }
+  }
+
+  // Poll job status and create playlist when done
+  React.useEffect(() => {
+    if (!jobId) return
+    // Capture playlist name at job-start time (step just changed to "downloading")
+    const capturedName = playlistName.trim() || "YouTube Import"
+    let handled = false
+
+    const finish = async (j: APIImportJob) => {
+      if (handled) return
+      handled = true
+
+      if (j.status === "error") {
+        toast.error("Some downloads failed — check that yt-dlp is installed")
+        setStep("preview")
+        return
+      }
+
+      setCreating(true)
+      // Wait for backend library rescan to pick up new files
+      await new Promise((r) => setTimeout(r, 3000))
+
+      const paths = j.items
+        .filter((i) => i.status === "done" && i.path)
+        .map((i) => i.path as string)
+
+      if (paths.length === 0) {
+        toast.error("No tracks were downloaded successfully")
+        setCreating(false)
+        return
+      }
+
+      try {
+        const pl = await api.playlists.create({
+          name: capturedName,
+          mode: "sequential",
+          crossfade_ms: 2000,
+          track_paths: paths,
+        })
+        onCreated(adaptApiPlaylist(pl))
+        toast.success(`"${capturedName}" created with ${paths.length} track${paths.length !== 1 ? "s" : ""}`)
+        reset()
+        onOpenChange(false)
+      } catch (err: unknown) {
+        toast.error(`Create playlist failed: ${err instanceof Error ? err.message : String(err)}`)
+        setCreating(false)
+      }
+    }
+
+    const poll = async () => {
+      try {
+        const j = await api.library.importJob(jobId)
+        setJobItems(j.items)
+        if (j.status === "done" || j.status === "error") {
+          clearInterval(timer)
+          finish(j)
+        }
+      } catch { /* ignore poll errors */ }
+    }
+
+    const timer = setInterval(poll, 1500)
+    poll()
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId])
+
+  const toggleAll = () => {
+    if (!preview) return
+    const allSel = selected.size === preview.items.length
+    setSelected(allSel ? new Set() : new Set(preview.items.map((i) => i.ytid)))
+  }
+
+  const toggleItem = (ytid: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(ytid) ? next.delete(ytid) : next.add(ytid)
+      return next
+    })
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
+      <DialogContent className="sm:max-w-lg bg-ink-900 border-ink-800">
+        <DialogHeader>
+          <DialogTitle className="text-ink-100 flex items-center gap-2">
+            <YtIcon className="h-4 w-4 text-red-500" />
+            Import from YouTube
+          </DialogTitle>
+          <DialogDescription className="text-ink-500">
+            {step === "input" && "Paste a YouTube video or playlist URL to download audio and create a playlist."}
+            {step === "preview" && (preview?.type === "playlist"
+              ? `${preview.items.length} tracks found — select which to download`
+              : "Video found — confirm to download")}
+            {step === "downloading" && (creating ? "Creating playlist…" : "Downloading audio files…")}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* ── Step 1: URL + name ── */}
+        {step === "input" && (
+          <div className="space-y-3 py-1">
+            <div>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">YouTube URL</p>
+              <input
+                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                placeholder="https://www.youtube.com/watch?v=… or /playlist?list=…"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handlePreview()}
+                autoFocus
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">Playlist Name</p>
+              <input
+                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                placeholder="Auto-filled from YouTube title (optional)"
+                value={playlistName}
+                onChange={(e) => setPlaylistName(e.target.value)}
+              />
+            </div>
+            <p className="text-[11px] text-ink-600 leading-relaxed">
+              Downloads audio as MP3. For personal use only — only download content you own or have permission to use.
+            </p>
+          </div>
+        )}
+
+        {/* ── Step 2: Preview ── */}
+        {step === "preview" && preview && (
+          <div className="space-y-3 py-1">
+            <div>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">Playlist Name</p>
+              <input
+                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                value={playlistName}
+                onChange={(e) => setPlaylistName(e.target.value)}
+                placeholder="Playlist name"
+              />
+            </div>
+
+            {preview.type === "playlist" && (
+              <div
+                className="flex items-center gap-2.5 cursor-pointer py-1"
+                onClick={toggleAll}
+              >
+                <div className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center border",
+                  selected.size === preview.items.length ? "border-k-500 bg-k-500" : "border-ink-700"
+                )}>
+                  {selected.size === preview.items.length && <Check className="h-2.5 w-2.5 text-white" />}
+                </div>
+                <span className="text-[12px] text-ink-400">
+                  Select all ({selected.size} / {preview.items.length})
+                </span>
+              </div>
+            )}
+
+            <div className="max-h-60 overflow-y-auto border border-ink-800">
+              {preview.items.map((item) => {
+                const isSel = selected.has(item.ytid)
+                return (
+                  <div
+                    key={item.ytid}
+                    className="kast-row flex items-center gap-3 px-3 py-2 border-b border-ink-800/60 last:border-0 cursor-pointer"
+                    onClick={() => toggleItem(item.ytid)}
+                  >
+                    <div className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center border",
+                      isSel ? "border-k-500 bg-k-500" : "border-ink-700"
+                    )}>
+                      {isSel && <Check className="h-2.5 w-2.5 text-white" />}
+                    </div>
+                    {item.thumbnail && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.thumbnail} alt="" className="h-8 w-14 shrink-0 object-cover" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12.5px] text-ink-100 font-medium truncate">{item.title}</p>
+                      <p className="text-[11px] text-ink-500 truncate">{item.artist}</p>
+                    </div>
+                    {item.duration_ms > 0 && (
+                      <span className="text-[11px] text-ink-500 font-mono shrink-0">
+                        {formatMs(item.duration_ms)}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 3: Downloading ── */}
+        {step === "downloading" && (
+          <div className="space-y-2 py-1">
+            {jobItems.length === 0 ? (
+              <div className="flex items-center gap-2 py-4 text-ink-500">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                <span className="text-[12.5px]">Starting download…</span>
+              </div>
+            ) : (
+              <>
+                {jobItems.map((item) => (
+                  <div key={item.ytid} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      {item.status === "done"        && <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                      {item.status === "error"       && <XCircle      className="h-3.5 w-3.5 text-red-500 shrink-0" />}
+                      {item.status === "downloading" && <Loader2      className="h-3.5 w-3.5 animate-spin text-k-500 shrink-0" />}
+                      {item.status === "pending"     && <div className="h-3.5 w-3.5 shrink-0 rounded-full border border-ink-700" />}
+                      <span className="flex-1 truncate text-[12.5px] text-ink-200">{item.title}</span>
+                      {item.status === "downloading" && (
+                        <span className="font-mono text-[11px] text-ink-500 shrink-0">{Math.round(item.progress)}%</span>
+                      )}
+                    </div>
+                    {item.status === "downloading" && (
+                      <div className="ml-5 h-0.5 overflow-hidden bg-ink-800">
+                        <div className="h-full bg-k-500 transition-all duration-300" style={{ width: `${item.progress}%` }} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {creating && (
+                  <div className="flex items-center gap-2 border-t border-ink-800 pt-3 mt-1 text-ink-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                    <span className="text-[12px]">Creating playlist…</span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <button
+            onClick={handleClose}
+            disabled={step === "downloading"}
+            className="h-9 px-4 border border-ink-800 hover:bg-ink-800 text-[13px] text-ink-200 transition-colors disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          {step === "input" && (
+            <button
+              onClick={handlePreview}
+              disabled={!url.trim() || previewing}
+              className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
+            >
+              {previewing ? "Loading…" : "Preview"}
+            </button>
+          )}
+          {step === "preview" && (
+            <button
+              onClick={handleStartDownload}
+              disabled={selected.size === 0 || !playlistName.trim()}
+              className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
+            >
+              Download {selected.size > 0 ? `${selected.size} track${selected.size !== 1 ? "s" : ""}` : ""}
+            </button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── New Playlist Dialog ──
 
 function NewPlaylistDialog({ open, onOpenChange, onCreated }: {
@@ -434,6 +764,7 @@ export default function PlaylistsPage() {
   const [loading, setLoading]       = React.useState(true)
   const [dirtyIds, setDirtyIds]     = React.useState<Set<string>>(new Set())
   const [newOpen, setNewOpen]       = React.useState(false)
+  const [ytOpen, setYtOpen]         = React.useState(false)
 
   const tracksByPath = React.useMemo(() => new Map(library.map((t) => [t.path, t])), [library])
 
@@ -537,10 +868,16 @@ export default function PlaylistsPage() {
       <aside className="w-60 shrink-0 flex flex-col border-r border-ink-800 bg-ink-900">
         <div className="flex shrink-0 items-center justify-between border-b border-ink-800 px-4 py-4">
           <h2 className="text-[13px] font-semibold text-ink-100">Playlists</h2>
-          <button onClick={() => setNewOpen(true)} title="New playlist"
-            className="h-7 w-7 flex items-center justify-center border border-ink-800 hover:bg-ink-800 text-ink-400 hover:text-ink-200 transition-colors">
-            <Plus className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setYtOpen(true)} title="Import from YouTube"
+              className="h-7 w-7 flex items-center justify-center border border-ink-800 hover:bg-ink-800 text-red-600/60 hover:text-red-500 transition-colors">
+              <YtIcon className="h-3.5 w-3.5" />
+            </button>
+            <button onClick={() => setNewOpen(true)} title="New playlist"
+              className="h-7 w-7 flex items-center justify-center border border-ink-800 hover:bg-ink-800 text-ink-400 hover:text-ink-200 transition-colors">
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {loading ? (
@@ -603,6 +940,19 @@ export default function PlaylistsPage() {
       </main>
 
       <NewPlaylistDialog open={newOpen} onOpenChange={setNewOpen} onCreated={createPlaylist} />
+
+      <YouTubeToPlaylistDialog
+        open={ytOpen}
+        onOpenChange={setYtOpen}
+        onCreated={(pl) => {
+          setPlaylists((prev) => [pl, ...prev])
+          setSelectedId(pl.id)
+          // Reload library so newly downloaded tracks resolve in the detail panel
+          api.library.list()
+            .then((ts) => setLibrary(ts.map(adaptApiTrack)))
+            .catch(() => {})
+        }}
+      />
     </div>
   )
 }

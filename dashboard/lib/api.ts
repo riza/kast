@@ -133,6 +133,7 @@ export type APIImportItem = {
   status:      APIImportItemStatus
   progress:    number
   error?:      string
+  path?:       string
 }
 
 export type APIPreviewResult = {

@@ -40,6 +40,7 @@ type Item struct {
 	Status     JobStatus `json:"status"`
 	Progress   float64   `json:"progress"` // 0–100
 	Err        string    `json:"error,omitempty"`
+	Path       string    `json:"path,omitempty"` // absolute path after successful download
 }
 
 // Job tracks a single import request (one or more items).
@@ -309,6 +310,7 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 		"--newline",
 		"--no-playlist",
 		"--windows-filenames",
+		"--print", "after_move:filepath",
 		videoURL,
 	)
 	cmd.Stderr = os.Stderr
@@ -330,13 +332,17 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 		return err
 	}
 
+	var downloadedPath string
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
-		if match := progressRe.FindStringSubmatch(sc.Text()); len(match) == 2 {
+		line := sc.Text()
+		if match := progressRe.FindStringSubmatch(line); len(match) == 2 {
 			pct, _ := strconv.ParseFloat(match[1], 64)
 			m.mu.Lock()
 			item.Progress = pct
 			m.mu.Unlock()
+		} else if s := strings.TrimSpace(line); strings.HasSuffix(s, ".mp3") {
+			downloadedPath = s
 		}
 	}
 
@@ -351,6 +357,7 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 	m.mu.Lock()
 	item.Status = StatusDone
 	item.Progress = 100
+	item.Path = downloadedPath
 	m.mu.Unlock()
 	return nil
 }
