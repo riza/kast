@@ -40,12 +40,13 @@ services:
       args:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
         VERSION:    ${VERSION:-dev}
+        API_URL:    ${API_URL:-http://server:8080}
     ports:
       - "3000:3000"
     environment:
       # Server URL used by Next.js rewrites to proxy /api/* and /hls/* server-side.
       # Keep the Docker service name here — browsers never see this address.
-      - API_URL=http://server:8080
+      - API_URL=${API_URL:-http://server:8080}
     restart: unless-stopped
     depends_on:
       - server

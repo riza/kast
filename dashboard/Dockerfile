@@ -12,9 +12,11 @@ COPY . .
 
 ARG GIT_COMMIT=unknown
 ARG VERSION=0.1.0
+ARG API_URL=http://server:8080
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV GIT_COMMIT=$GIT_COMMIT
 ENV NEXT_PUBLIC_VERSION=$VERSION
+ENV API_URL=$API_URL
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
