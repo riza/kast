@@ -10,7 +10,11 @@ RUN npm ci
 
 COPY . .
 
+ARG GIT_COMMIT=unknown
+ARG VERSION=0.1.0
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV GIT_COMMIT=$GIT_COMMIT
+ENV NEXT_PUBLIC_VERSION=$VERSION
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────

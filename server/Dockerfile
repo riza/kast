@@ -8,7 +8,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /kast ./cmd/kast
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w \
+      -X github.com/riza/kast/internal/version.Version=${VERSION} \
+      -X github.com/riza/kast/internal/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/riza/kast/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /kast ./cmd/kast
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM alpine:3.20

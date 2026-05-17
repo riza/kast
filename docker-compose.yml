@@ -3,16 +3,21 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+      args:
+        VERSION:    ${VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "8080:8080"
       - "443:443"
     volumes:
       - ./server/kast.toml:/app/kast.toml:ro
-      - ./server/data/music:/app/data/music      # ← host klasörü direkt mount
+      - ./server/data/music:/app/data/music
       - ./server/data/hls:/app/data/hls
       - ./server/data/mounts:/app/data/mounts
       - ./server/data/library:/app/data/library
       - ./server/data/playlists:/app/data/playlists
+      - ./server/data/kast.db:/app/data/kast.db
     restart: unless-stopped
     environment:
       - GOGC=100
@@ -21,6 +26,9 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        VERSION:    ${VERSION:-dev}
     ports:
       - "3000:3000"
     environment:

@@ -21,6 +21,12 @@ dashboard:
 
 # ── Development ───────────────────────────────────────────────────────────────
 
+docker-build:
+	VERSION=$(VERSION) GIT_COMMIT=$(GIT_COMMIT) BUILD_TIME=$(BUILD_TIME) docker compose build
+
+docker-up:
+	VERSION=$(VERSION) GIT_COMMIT=$(GIT_COMMIT) BUILD_TIME=$(BUILD_TIME) docker compose up -d
+
 dev:
 	@$(MAKE) -j2 dev-server dev-dashboard
 
