@@ -447,14 +447,85 @@ function PlaylistPanel({ playlist }: { playlist: PlaylistInfo | null }) {
   )
 }
 
+// ── Queue panel ────────────────────────────────────────────────────────────
+
+function QueuePanel({
+  np, history, playlist, accent,
+}: {
+  np: NowPlaying
+  history: HistoryTrack[]
+  playlist: PlaylistInfo | null
+  accent: string
+}) {
+  const recent   = history.slice(0, 5).reverse()
+  const upcoming = playlist?.tracks.slice(0, 5) ?? []
+
+  return (
+    <section>
+      <SectionHead label="Queue" />
+      <ul className="mt-5 divide-y" style={{ borderColor: "var(--pl-line)" }}>
+        {recent.map((t, i) => {
+          const [c1, c2] = strColor(t.title + t.artist)
+          return (
+            <li key={`h-${i}`} className="flex items-center gap-3 py-2.5 opacity-40">
+              <div className="w-8 h-8 shrink-0 rounded-full" style={{ background: `linear-gradient(135deg,${c1} 0%,${c2} 100%)` }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] truncate">{t.title}</div>
+                <div className="font-mono text-[11px] truncate" style={{ color: "var(--pl-fg-3)" }}>{t.artist}</div>
+              </div>
+              <div className="font-mono text-[11px] tabular-nums shrink-0" style={{ color: "var(--pl-fg-3)" }}>{fmtTime(t.duration_ms)}</div>
+            </li>
+          )
+        })}
+
+        {np && (() => {
+          const [c1, c2] = strColor(np.title + np.artist)
+          return (
+            <li className="flex items-center gap-3 py-3 -mx-3 px-3" style={{ background: "var(--pl-card)" }}>
+              <div className="w-8 h-8 shrink-0 rounded-full" style={{ background: `linear-gradient(135deg,${c1} 0%,${c2} 100%)` }} />
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-[9px] tracking-[0.15em] uppercase mb-0.5" style={{ color: accent }}>Now Playing</div>
+                <div className="text-[13px] truncate font-semibold">{np.title}</div>
+                <div className="font-mono text-[11px] truncate" style={{ color: "var(--pl-fg-3)" }}>{np.artist}</div>
+              </div>
+              <div className="font-mono text-[11px] tabular-nums shrink-0" style={{ color: "var(--pl-fg-3)" }}>{fmtTime(np.duration_ms)}</div>
+            </li>
+          )
+        })()}
+
+        {upcoming.map((t, i) => {
+          const [c1, c2] = strColor(t.title + t.artist)
+          return (
+            <li key={`n-${i}`} className="flex items-center gap-3 py-2.5">
+              <div className="font-mono text-[11px] tabular-nums w-5 shrink-0 text-right" style={{ color: "var(--pl-fg-3)" }}>{i + 1}</div>
+              <div className="w-8 h-8 shrink-0 rounded-full" style={{ background: `linear-gradient(135deg,${c1} 0%,${c2} 100%)` }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] truncate">{t.title}</div>
+                <div className="font-mono text-[11px] truncate" style={{ color: "var(--pl-fg-3)" }}>{t.artist}</div>
+              </div>
+              <div className="font-mono text-[11px] tabular-nums shrink-0" style={{ color: "var(--pl-fg-3)" }}>{fmtTime(t.duration_ms)}</div>
+            </li>
+          )
+        })}
+
+        {recent.length === 0 && !np && upcoming.length === 0 && (
+          <li className="py-3">
+            <p className="text-[13px] font-mono" style={{ color: "var(--pl-fg-3)" }}>Queue is empty.</p>
+          </li>
+        )}
+      </ul>
+    </section>
+  )
+}
+
 // ── Footer ─────────────────────────────────────────────────────────────────
 
 function Footer({ accent }: { accent: string }) {
   return (
     <footer className="mt-24 pt-8 border-t" style={{ borderColor: "var(--pl-line)" }}>
-      <div className="flex items-end justify-end">
+      <div className="flex items-end justify-start">
         <a
-          href="https://github.com/riza/kast"
+          href="https://getkast.dev"
           target="_blank" rel="noreferrer"
           className="group inline-flex items-center gap-3 border px-3 py-2.5 hover:bg-[var(--pl-card)] transition-colors"
           style={{ borderColor: "var(--pl-line)" }}
@@ -819,8 +890,14 @@ export default function ListenPage({
                     website={station?.website}
                   />
                 )}
-                {showHistory && <HistoryPanel tracks={history} />}
-                {showPlaylist && <PlaylistPanel playlist={playlist} />}
+                {(showHistory || showPlaylist) && (
+                  <QueuePanel
+                    np={np ?? null}
+                    history={showHistory ? history : []}
+                    playlist={showPlaylist ? playlist : null}
+                    accent={accent}
+                  />
+                )}
               </div>
             )}
 
