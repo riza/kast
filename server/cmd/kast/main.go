@@ -35,7 +35,17 @@ func main() {
 	}
 }
 
+const banner = ` __                     __
+|  | _______    _______/  |_
+|  |/ /\__  \  /  ___/\   __\
+|    <  / __ \_\___ \  |  |
+|__|_ \(____  /____  > |__|
+     \/     \/     \/
+`
+
 func run() error {
+	fmt.Print(banner)
+
 	cfgPath := flag.String("config", "kast.toml", "path to TOML configuration file")
 	flag.Parse()
 
