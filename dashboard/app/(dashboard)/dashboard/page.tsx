@@ -61,54 +61,6 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {/* On-air panel */}
-      <div className="border border-ink-800 bg-ink-900">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-ink-800">
-          <span className={cn(
-            "inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider shrink-0",
-            liveMounts.length > 0 ? "text-emerald-400" : "text-ink-500"
-          )}>
-            {liveMounts.length > 0
-              ? <PulseDot className="bg-emerald-500" />
-              : <span className="w-1.5 h-1.5 rounded-full bg-ink-600 shrink-0" />
-            }
-            On air
-          </span>
-          {apiStatus && (
-            <span className="text-[11px] text-ink-600 font-mono">
-              {formatUptime(apiStatus.uptime_sec)} uptime · {apiStatus.version}
-            </span>
-          )}
-        </div>
-
-        {/* Mount list */}
-        {liveMounts.length === 0 ? (
-          <div className="px-4 py-3 text-[12.5px] text-ink-500 font-mono">
-            {apiMounts === null ? "Connecting…" : "No mounts live"}
-          </div>
-        ) : (
-          <div className="divide-y divide-ink-800/60 max-h-[220px] overflow-y-auto">
-            {liveMounts.map((m) => (
-              <div key={m.id} className="flex items-center gap-3 px-4 py-2.5">
-                <PulseDot className="bg-emerald-500 shrink-0" />
-                <span className="font-mono text-[13px] text-ink-100 truncate">{m.name}</span>
-                {m.player_station_name && (
-                  <span className="text-[12px] text-ink-500 truncate">{m.player_station_name}</span>
-                )}
-                <div className="flex-1" />
-                <span className="text-[11px] font-mono text-ink-400 shrink-0">
-                  {m.listeners} lsnr
-                </span>
-                <span className="text-[11px] font-mono text-ink-600 shrink-0">
-                  {[m.codec, m.bitrate].filter(Boolean).join(" · ")}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Stat strip */}
       <div className="mt-8 grid grid-cols-3 gap-px bg-ink-800 border border-ink-800 rounded-lg overflow-hidden">
         <div className="bg-ink-950 px-5 py-4">
