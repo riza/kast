@@ -3,8 +3,9 @@
 // This lets users set the API URL and key from the Settings page without
 // rebuilding the Docker image.
 
-const LS_URL_KEY = "kast_api_url"
-const LS_KEY_KEY = "kast_api_key"
+const LS_URL_KEY   = "kast_api_url"
+const LS_KEY_KEY   = "kast_api_key"
+const LS_TOKEN_KEY = "kast_auth_token"
 
 function getBase(): string {
   if (typeof window !== "undefined") {
@@ -14,8 +15,11 @@ function getBase(): string {
   return (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/$/, "")
 }
 
+// JWT token takes priority over static API key.
 function getKey(): string {
   if (typeof window !== "undefined") {
+    const jwt = localStorage.getItem(LS_TOKEN_KEY)
+    if (jwt) return jwt
     const stored = localStorage.getItem(LS_KEY_KEY)
     if (stored) return stored
   }
@@ -60,6 +64,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
     cache: "no-store",
   })
+  if (res.status === 401 && typeof window !== "undefined") {
+    // Token expired or invalid — clear and redirect to login.
+    localStorage.removeItem(LS_TOKEN_KEY)
+    window.location.href = "/login"
+    return undefined as T
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     throw new APIError(res.status, text)
@@ -239,7 +249,46 @@ function buildQS(params?: Record<string, string | undefined>): string {
 
 // ── API object ───────────────────────────────────────────────────────────────
 
+export type APIUser = {
+  id:         string
+  username:   string
+  role:       "admin" | "operator" | "viewer"
+  created_at: string
+}
+
+export type LoginResponse = {
+  token: string
+  user:  APIUser
+}
+
 export const api = {
+  auth: {
+    /** POST /api/auth/login — public, no token required */
+    login: (username: string, password: string) =>
+      fetch(getBase() + "/api/auth/login", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ username, password }),
+      }).then(async (r) => {
+        if (!r.ok) throw new APIError(r.status, "invalid credentials")
+        const data = await r.json()
+        return data.data as LoginResponse
+      }),
+
+    /** GET /api/auth/me */
+    me: () => apiFetch<APIUser>("/api/auth/me"),
+  },
+
+  users: {
+    list:   () => apiFetch<APIUser[]>("/api/users"),
+    create: (body: { username: string; password: string; role: string }) =>
+      apiFetch<APIUser>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+    update: (id: string, body: { role?: string; password?: string }) =>
+      apiFetch<APIUser>(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    delete: (id: string) =>
+      apiFetch<void>(`/api/users/${id}`, { method: "DELETE" }),
+  },
+
   /** GET /api/status */
   status: () => apiFetch<APIStatus>("/api/status"),
 

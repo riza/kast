@@ -17,6 +17,7 @@ import (
 	"github.com/riza/kast/internal/api/handler"
 	"github.com/riza/kast/internal/api/middleware"
 	"github.com/riza/kast/internal/api/respond"
+	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/config"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/hls"
@@ -77,6 +78,7 @@ func (lt *listenerTracker) sweep() map[string]int {
 // NewApp builds and returns the Fiber application.
 func NewApp(
 	cfg *config.Config,
+	auth *authmanager.Manager,
 	mounts *mount.Manager,
 	scanner *library.Scanner,
 	segmenter *hls.Segmenter,
@@ -332,6 +334,10 @@ func NewApp(
 		return nil
 	})
 
+	// ── Auth endpoints — public ─────────────────────────────────────────────
+	authH := &handler.Auth{Manager: auth}
+	app.Post("/api/auth/login", authH.Login)
+
 	// ── Admin API — Bearer token required ───────────────────────────────────
 	api := app.Group("/api", limiter.New(limiter.Config{
 		Max:        200,
@@ -339,7 +345,17 @@ func NewApp(
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
 		},
-	}), middleware.BearerAuth(cfg.Admin.APIKey))
+	}), middleware.BearerAuth(cfg.Admin.APIKey, auth))
+
+	api.Get("/auth/me", authH.Me)
+
+	// User management — admin only
+	uh := &handler.Users{Manager: auth}
+	adminOnly := middleware.RequireRole(authmanager.RoleAdmin)
+	api.Get("/users", adminOnly, uh.List)
+	api.Post("/users", adminOnly, uh.Create)
+	api.Put("/users/:id", adminOnly, uh.Update)
+	api.Delete("/users/:id", adminOnly, uh.Delete)
 
 	mh := &handler.Mounts{Manager: mounts}
 	lh := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}

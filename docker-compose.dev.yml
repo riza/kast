@@ -1,0 +1,36 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./server/kast.toml:/app/kast.toml:ro
+      - ./server/data/music:/app/data/music
+      - ./server/data/hls:/app/data/hls
+      - ./server/data/mounts:/app/data/mounts
+      - ./server/data/library:/app/data/library
+      - ./server/data/playlists:/app/data/playlists
+    restart: unless-stopped
+    environment:
+      - GOGC=100
+
+  dashboard:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source — changes on host reflect immediately inside container
+      - ./dashboard:/app
+      # Isolate node_modules inside the container (don't overwrite host copy)
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_KEY=CHANGE_ME_BEFORE_PRODUCTION
+      - WATCHPACK_POLLING=true   # needed for file-change detection in Docker
+    depends_on:
+      - server
+    restart: unless-stopped

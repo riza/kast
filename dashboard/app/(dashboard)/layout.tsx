@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { isLoggedIn, clearToken, currentUser } from "@/lib/auth"
 import {
   LayoutDashboard,
   Radio,
@@ -13,6 +14,7 @@ import {
   Webhook,
   KeyRound,
   Settings,
+  LogOut,
 } from "lucide-react"
 
 // ── Navigation Definition ──
@@ -93,6 +95,25 @@ function GithubIcon({ className }: { className?: string }) {
   )
 }
 
+// ── Auth guard ──
+
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const [checked, setChecked] = React.useState(false)
+  const [authed, setAuthed]   = React.useState(false)
+
+  React.useEffect(() => {
+    if (isLoggedIn()) {
+      setAuthed(true)
+    } else {
+      window.location.replace("/login")
+    }
+    setChecked(true)
+  }, [])
+
+  if (!checked || !authed) return null
+  return <>{children}</>
+}
+
 // ── Shell ──
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -100,6 +121,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { pendingPath } = React.useContext(NavigationContext)
   const activePath = pendingPath ?? pathname
   const pageLabel = PAGE_LABELS[pathname] ?? "Kast"
+  const user = currentUser()
+
+  const handleLogout = () => {
+    clearToken()
+    window.location.href = "/login"
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-ink-950">
@@ -160,8 +187,23 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <header className="h-14 shrink-0 border-b border-ink-800 bg-ink-900 flex items-center px-6 gap-3">
           <span className="text-[13px] font-medium text-ink-100">{pageLabel}</span>
           <div className="flex-1" />
-          <div className="h-7 w-7 rounded-full bg-gradient-to-br from-k-400 to-k-600 text-white text-[11px] font-semibold flex items-center justify-center select-none">
-            AD
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 bg-k-500 text-white text-[11px] font-bold flex items-center justify-center select-none uppercase">
+                {user?.username?.[0] ?? "?"}
+              </div>
+              <span className="text-[12px] font-mono text-ink-400">{user?.username}</span>
+              {user?.role !== "admin" && (
+                <span className="text-[10px] font-mono text-ink-600 uppercase tracking-wider">{user?.role}</span>
+              )}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="h-7 w-7 flex items-center justify-center text-ink-500 hover:text-ink-200 transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
           </div>
         </header>
 
@@ -180,8 +222,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <NavigationProvider>
-      <DashboardShell>{children}</DashboardShell>
-    </NavigationProvider>
+    <AuthGuard>
+      <NavigationProvider>
+        <DashboardShell>{children}</DashboardShell>
+      </NavigationProvider>
+    </AuthGuard>
   )
 }

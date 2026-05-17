@@ -16,7 +16,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/riza/kast/internal/api"
+	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/config"
+	"github.com/riza/kast/internal/db"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
@@ -47,6 +49,18 @@ func run() error {
 
 	// ── Storage directories ──────────────────────────────────────────────────
 	dataDir := "./data"
+
+	// ── Database ─────────────────────────────────────────────────────────────
+	database, err := db.Open(filepath.Join(dataDir, "kast.db"))
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer database.Close()
+
+	auth := authmanager.New(database, cfg.Admin.JWTSecret)
+	if err := auth.EnsureAdmin(cfg.Admin.InitialUser, cfg.Admin.InitialPass); err != nil {
+		return fmt.Errorf("auth: ensure admin: %w", err)
+	}
 
 	// ── Core services ────────────────────────────────────────────────────────
 	mounts, err := mount.NewManager(filepath.Join(dataDir, "mounts"))
@@ -88,7 +102,7 @@ func run() error {
 	ytm := ytimport.NewManager(importDir, scanner)
 
 	// ── Fiber app ────────────────────────────────────────────────────────────
-	app := api.NewApp(cfg, mounts, scanner, segmenter, src, playlists, djm, ytm)
+	app := api.NewApp(cfg, auth, mounts, scanner, segmenter, src, playlists, djm, ytm)
 
 	// ── Initial library scan (background) ────────────────────────────────────
 	go func() {
