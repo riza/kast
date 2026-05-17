@@ -96,15 +96,20 @@ func NewApp(
 	}), func(c *fiber.Ctx) error {
 		mountName := c.Params("mount")
 
-		ip := c.IP()
-		if host, _, err := net.SplitHostPort(ip); err == nil {
-			ip = host
-		}
-		count := listenerTrack.touch("/"+mountName, ip)
-		mounts.SetListeners("/"+mountName, count)
-
 		dir := segmenter.MountDir(mountName)
 		filePath := c.Params("*")
+
+		// Only count segment requests as listeners — not playlist polls.
+		// Playlist files are fetched immediately on page load and frequently
+		// during playback; segments are only fetched by clients actively playing.
+		if filePath != "index.m3u8" && filePath != "init.mp4" {
+			ip := c.IP()
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
+			}
+			count := listenerTrack.touch("/"+mountName, ip)
+			mounts.SetListeners("/"+mountName, count)
+		}
 		fullPath := filepath.Join(dir, filepath.Clean("/"+filePath))
 
 		// ── LL-HLS blocking playlist reload ─────────────────────────────────
