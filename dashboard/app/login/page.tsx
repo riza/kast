@@ -67,7 +67,7 @@ export default function LoginPage() {
       return
     }
 
-    if (!weakWarn && isWeakCredential(username, password)) {
+    if (mode === "setup" && !weakWarn && isWeakCredential(username, password)) {
       setWeakWarn(true)
       return
     }
