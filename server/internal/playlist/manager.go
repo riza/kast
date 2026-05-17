@@ -2,13 +2,15 @@
 package playlist
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Playlist is a named, ordered set of audio file paths.
@@ -16,10 +18,10 @@ type Playlist struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
 	Description    string    `json:"description"`
-	Mode           string    `json:"mode"`            // "sequential" | "shuffle"
-	CrossfadeMs    int       `json:"crossfade_ms"`    // 0 = disabled
+	Mode           string    `json:"mode"`
+	CrossfadeMs    int       `json:"crossfade_ms"`
 	TrackPaths     []string  `json:"track_paths"`
-	LastPlayedPath string    `json:"last_played_path"` // path of the last track that started playing
+	LastPlayedPath string    `json:"last_played_path"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -27,21 +29,18 @@ type Playlist struct {
 // ErrNotFound is returned when a playlist does not exist.
 var ErrNotFound = errors.New("playlist not found")
 
-// Manager holds all playlists and serialises them to disk.
+// Manager holds all playlists in memory and persists them to SQLite.
 type Manager struct {
 	mu        sync.RWMutex
-	playlists map[string]*Playlist // keyed by Playlist.ID
-	storeFile string
+	playlists map[string]*Playlist
+	db        *sql.DB
 }
 
-// NewManager creates a Manager backed by dataDir/playlists.json.
-func NewManager(dataDir string) (*Manager, error) {
-	if err := os.MkdirAll(dataDir, 0o750); err != nil {
-		return nil, fmt.Errorf("playlist: mkdir %q: %w", dataDir, err)
-	}
+// NewManager creates a Manager backed by db.
+func NewManager(db *sql.DB) (*Manager, error) {
 	m := &Manager{
 		playlists: make(map[string]*Playlist),
-		storeFile: filepath.Join(dataDir, "playlists.json"),
+		db:        db,
 	}
 	if err := m.load(); err != nil {
 		return nil, err
@@ -56,6 +55,7 @@ func (m *Manager) List() []*Playlist {
 	out := make([]*Playlist, 0, len(m.playlists))
 	for _, p := range m.playlists {
 		cp := *p
+		cp.TrackPaths = append([]string(nil), p.TrackPaths...)
 		out = append(out, &cp)
 	}
 	return out
@@ -70,6 +70,7 @@ func (m *Manager) Get(id string) (*Playlist, error) {
 		return nil, ErrNotFound
 	}
 	cp := *p
+	cp.TrackPaths = append([]string(nil), p.TrackPaths...)
 	return &cp, nil
 }
 
@@ -87,18 +88,16 @@ func (m *Manager) Create(req CreateRequest) (*Playlist, error) {
 	if req.Name == "" {
 		return nil, errors.New("playlist name is required")
 	}
-	mode := coerceMode(req.Mode)
 	paths := req.TrackPaths
 	if paths == nil {
 		paths = []string{}
 	}
-
 	now := time.Now().UTC()
 	p := &Playlist{
 		ID:          newID(),
 		Name:        req.Name,
 		Description: req.Description,
-		Mode:        mode,
+		Mode:        coerceMode(req.Mode),
 		CrossfadeMs: req.CrossfadeMs,
 		TrackPaths:  paths,
 		CreatedAt:   now,
@@ -108,10 +107,11 @@ func (m *Manager) Create(req CreateRequest) (*Playlist, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.playlists[p.ID] = p
-	if err := m.persist(); err != nil {
-		return nil, err
+	if err := m.insertDB(p); err != nil {
+		slog.Error("playlist: db insert", "err", err)
 	}
 	cp := *p
+	cp.TrackPaths = append([]string(nil), p.TrackPaths...)
 	return &cp, nil
 }
 
@@ -151,15 +151,16 @@ func (m *Manager) Update(id string, req UpdateRequest) (*Playlist, error) {
 		p.TrackPaths = req.TrackPaths
 	}
 	p.UpdatedAt = time.Now().UTC()
-	if err := m.persist(); err != nil {
-		return nil, err
+
+	if err := m.updateDB(p); err != nil {
+		slog.Error("playlist: db update", "err", err)
 	}
 	cp := *p
+	cp.TrackPaths = append([]string(nil), p.TrackPaths...)
 	return &cp, nil
 }
 
 // SetLastPlayed persists the path of the track that just started playing.
-// Called by the DJManager on every track change to enable resume-on-restart.
 func (m *Manager) SetLastPlayed(id, path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -168,7 +169,8 @@ func (m *Manager) SetLastPlayed(id, path string) error {
 		return ErrNotFound
 	}
 	p.LastPlayedPath = path
-	return m.persist()
+	_, err := m.db.Exec("UPDATE playlists SET last_played_path = ? WHERE id = ?", path, id)
+	return err
 }
 
 // Delete removes a playlist by ID.
@@ -179,10 +181,75 @@ func (m *Manager) Delete(id string) error {
 		return ErrNotFound
 	}
 	delete(m.playlists, id)
-	return m.persist()
+	if _, err := m.db.Exec("DELETE FROM playlists WHERE id = ?", id); err != nil {
+		slog.Error("playlist: db delete", "err", err)
+	}
+	return nil
 }
 
-// coerceMode normalises the mode string; defaults to "sequential".
+// ── internal ──────────────────────────────────────────────────────────────────
+
+func (m *Manager) insertDB(p *Playlist) error {
+	paths, _ := json.Marshal(p.TrackPaths)
+	_, err := m.db.Exec(`
+		INSERT INTO playlists (id, name, description, mode, crossfade_ms, track_paths, last_played_path, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Description, p.Mode, p.CrossfadeMs,
+		string(paths), p.LastPlayedPath,
+		p.CreatedAt.UTC().Format(time.RFC3339),
+		p.UpdatedAt.UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (m *Manager) updateDB(p *Playlist) error {
+	paths, _ := json.Marshal(p.TrackPaths)
+	_, err := m.db.Exec(`
+		UPDATE playlists SET name = ?, description = ?, mode = ?, crossfade_ms = ?,
+		                     track_paths = ?, last_played_path = ?, updated_at = ?
+		WHERE id = ?`,
+		p.Name, p.Description, p.Mode, p.CrossfadeMs,
+		string(paths), p.LastPlayedPath,
+		p.UpdatedAt.UTC().Format(time.RFC3339),
+		p.ID,
+	)
+	return err
+}
+
+func (m *Manager) load() error {
+	rows, err := m.db.Query(`
+		SELECT id, name, description, mode, crossfade_ms, track_paths, last_played_path, created_at, updated_at
+		FROM playlists`)
+	if err != nil {
+		return fmt.Errorf("playlist: load: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			p          Playlist
+			pathsJSON  string
+			createdAt  string
+			updatedAt  string
+		)
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Description, &p.Mode, &p.CrossfadeMs,
+			&pathsJSON, &p.LastPlayedPath, &createdAt, &updatedAt,
+		); err != nil {
+			return fmt.Errorf("playlist: load scan: %w", err)
+		}
+		_ = json.Unmarshal([]byte(pathsJSON), &p.TrackPaths)
+		if p.TrackPaths == nil {
+			p.TrackPaths = []string{}
+		}
+		p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		p.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		cp := p
+		m.playlists[p.ID] = &cp
+	}
+	return rows.Err()
+}
+
 func coerceMode(s string) string {
 	if s == "shuffle" {
 		return "shuffle"
@@ -190,40 +257,6 @@ func coerceMode(s string) string {
 	return "sequential"
 }
 
-func (m *Manager) persist() error {
-	list := make([]*Playlist, 0, len(m.playlists))
-	for _, p := range m.playlists {
-		list = append(list, p)
-	}
-	b, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := m.storeFile + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("playlist: write tmp: %w", err)
-	}
-	return os.Rename(tmp, m.storeFile)
-}
-
-func (m *Manager) load() error {
-	b, err := os.ReadFile(filepath.Clean(m.storeFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("playlist: read %q: %w", m.storeFile, err)
-	}
-	var list []*Playlist
-	if err := json.Unmarshal(b, &list); err != nil {
-		return fmt.Errorf("playlist: parse %q: %w", m.storeFile, err)
-	}
-	for _, p := range list {
-		m.playlists[p.ID] = p
-	}
-	return nil
-}
-
 func newID() string {
-	return fmt.Sprintf("%x", time.Now().UnixNano())
+	return uuid.New().String()
 }

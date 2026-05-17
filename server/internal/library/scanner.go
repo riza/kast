@@ -3,6 +3,7 @@ package library
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Track represents a single audio file in the library.
@@ -36,25 +39,23 @@ type Scanner struct {
 	tracks     []*Track
 	scanDirs   []string
 	extensions []string
-	storeDir   string
+	db         *sql.DB
 }
 
-// NewScanner creates a Scanner. storeDir is used to persist the track index.
-func NewScanner(scanDirs, extensions []string, storeDir string) (*Scanner, error) {
-	if err := os.MkdirAll(storeDir, 0o750); err != nil {
-		return nil, fmt.Errorf("library: mkdir %q: %w", storeDir, err)
-	}
+// NewScanner creates a Scanner backed by db.
+func NewScanner(scanDirs, extensions []string, db *sql.DB) (*Scanner, error) {
 	s := &Scanner{
 		scanDirs:   scanDirs,
 		extensions: extensions,
-		storeDir:   storeDir,
+		db:         db,
 	}
-	_ = s.load() // best-effort; ignore if no saved index
+	if err := s.load(); err != nil {
+		slog.Warn("library: load from db failed", "err", err)
+	}
 	return s, nil
 }
 
-// PrimaryUploadDir returns the first configured scan directory, used as the
-// destination for browser-uploaded files. Falls back to "./data/music".
+// PrimaryUploadDir returns the first configured scan directory.
 func (s *Scanner) PrimaryUploadDir() string {
 	if len(s.scanDirs) > 0 {
 		return s.scanDirs[0]
@@ -72,19 +73,17 @@ func (s *Scanner) Tracks() []*Track {
 }
 
 // Scan walks all configured directories and updates the track list.
-// ctx may be used to cancel a long scan.
 func (s *Scanner) Scan(ctx context.Context) error {
 	var found []*Track
 	now := time.Now().UTC()
 
 	for _, dir := range s.scanDirs {
-		// Guard against path traversal: ensure dir is clean.
 		dir = filepath.Clean(dir)
 
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				slog.Warn("library: walk error", "path", path, "err", err)
-				return nil // keep walking
+				return nil
 			}
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -98,7 +97,6 @@ func (s *Scanner) Scan(ctx context.Context) error {
 				return nil
 			}
 
-			// Ensure path is inside the intended scan directory.
 			rel, err := filepath.Rel(dir, path)
 			if err != nil || strings.HasPrefix(rel, "..") {
 				slog.Warn("library: skipping path outside scan dir", "path", path)
@@ -122,14 +120,73 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	s.tracks = found
 	s.mu.Unlock()
 
-	if err := s.persist(); err != nil {
+	if err := s.persist(found); err != nil {
 		slog.Error("library: persist after scan", "err", err)
 	}
 	slog.Info("library: scan complete", "tracks", len(found))
 	return nil
 }
 
-// ffprobeOutput is the minimal subset of ffprobe's JSON we need.
+// ── internal ──────────────────────────────────────────────────────────────────
+
+func (s *Scanner) persist(tracks []*Track) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("library: persist begin tx: %w", err)
+	}
+
+	// Replace entire track index atomically.
+	if _, err := tx.Exec("DELETE FROM tracks"); err != nil {
+		tx.Rollback()
+		return err
+	}
+	for _, t := range tracks {
+		if _, err := tx.Exec(`
+			INSERT INTO tracks (id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			t.ID, t.Path, t.Title, t.Artist, t.Album, t.Genre,
+			t.DurationMs, t.Bitrate, t.SizeBytes, t.Folder,
+			t.AddedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			slog.Warn("library: persist insert", "path", t.Path, "err", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Scanner) load() error {
+	rows, err := s.db.Query(`
+		SELECT id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at
+		FROM tracks`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var tracks []*Track
+	for rows.Next() {
+		var t Track
+		var addedAt string
+		if err := rows.Scan(
+			&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre,
+			&t.DurationMs, &t.Bitrate, &t.SizeBytes, &t.Folder, &addedAt,
+		); err != nil {
+			return err
+		}
+		t.AddedAt, _ = time.Parse(time.RFC3339, addedAt)
+		tracks = append(tracks, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.tracks = tracks
+	s.mu.Unlock()
+	return nil
+}
+
+// ── ffprobe ───────────────────────────────────────────────────────────────────
+
 type ffprobeOutput struct {
 	Format struct {
 		Filename string `json:"filename"`
@@ -145,8 +202,6 @@ type ffprobeOutput struct {
 	} `json:"format"`
 }
 
-// probeTrack runs ffprobe on path and returns a Track.
-// Arguments are passed explicitly — no shell interpolation.
 func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, error) {
 	// #nosec G204 — args are a fixed list; path is already cleaned and validated.
 	cmd := exec.CommandContext(ctx,
@@ -174,7 +229,7 @@ func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, er
 
 	var bitrate int
 	fmt.Sscanf(f.BitRate, "%d", &bitrate)
-	bitrate /= 1000 // bps → kbps
+	bitrate /= 1000
 
 	var size int64
 	fmt.Sscanf(f.Size, "%d", &size)
@@ -185,7 +240,7 @@ func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, er
 	}
 
 	return &Track{
-		ID:         trackID(path),
+		ID:         trackID(),
 		Path:       path,
 		Title:      title,
 		Artist:     f.Tags.Artist,
@@ -199,41 +254,6 @@ func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, er
 	}, nil
 }
 
-func trackID(path string) string {
-	// Simple deterministic ID from path — good enough for v1.
-	return fmt.Sprintf("%x", []byte(path))[:16]
-}
-
-func (s *Scanner) persist() error {
-	s.mu.RLock()
-	tracks := make([]*Track, len(s.tracks))
-	copy(tracks, s.tracks)
-	s.mu.RUnlock()
-
-	b, err := json.MarshalIndent(tracks, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(s.storeDir, "library.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func (s *Scanner) load() error {
-	path := filepath.Join(s.storeDir, "library.json")
-	b, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return err
-	}
-	var tracks []*Track
-	if err := json.Unmarshal(b, &tracks); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.tracks = tracks
-	s.mu.Unlock()
-	return nil
+func trackID() string {
+	return uuid.New().String()
 }

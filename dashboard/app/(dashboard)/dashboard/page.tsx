@@ -95,6 +95,10 @@ export default function OverviewPage() {
 
   return (
     <div>
+      <div className="mb-8">
+        <h1 className="text-[24px] font-bold tracking-tight text-ink-100">Overview</h1>
+        <p className="text-[12.5px] text-ink-400 mt-1">Server status and active streams</p>
+      </div>
 
       {/* Error */}
       {error && (

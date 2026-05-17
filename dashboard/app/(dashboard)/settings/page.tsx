@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-import { saveConnectionSettings, loadConnectionSettings } from "@/lib/api"
+import { api } from "@/lib/api"
 
 // ── Design primitives ──
 
@@ -90,7 +90,6 @@ function Row({ label, description, children }: { label: string; description?: st
 // ── Tabs ──
 
 const TABS = [
-  { id: "connection",    label: "Connection" },
   { id: "server",       label: "Server" },
   { id: "streaming",    label: "Streaming" },
   { id: "logging",      label: "Logging" },
@@ -103,35 +102,7 @@ type TabId = typeof TABS[number]["id"]
 // ── Page ──
 
 export default function SettingsPage() {
-  const [tab, setTab] = React.useState<TabId>("connection")
-
-  // ── API Connection ──
-  const [apiUrl, setApiUrl] = React.useState("http://localhost:8080")
-  const [apiKey, setApiKey] = React.useState("")
-  const [testing, setTesting] = React.useState(false)
-
-  React.useEffect(() => {
-    const s = loadConnectionSettings()
-    setApiUrl(s.url); setApiKey(s.key)
-  }, [])
-
-  const saveConnection = () => { saveConnectionSettings(apiUrl, apiKey); toast.success("Connection settings saved") }
-
-  const testConnection = async () => {
-    setTesting(true)
-    try {
-      const res = await fetch(apiUrl.replace(/\/$/, "") + "/api/status", {
-        headers: { Authorization: `Bearer ${apiKey}` }, cache: "no-store",
-      })
-      if (res.ok) {
-        const data = await res.json()
-        toast.success(`Connected! Kast ${data.version} — uptime ${data.uptime_sec}s`)
-      } else {
-        toast.error(`Server responded with ${res.status} — check API key`)
-      }
-    } catch { toast.error("Could not reach server — check API URL") }
-    finally { setTesting(false) }
-  }
+  const [tab, setTab] = React.useState<TabId>("server")
 
   // ── Server ──
   const [serverName, setServerName]     = React.useState("My Kast Server")
@@ -196,31 +167,6 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
-
-      {/* ── Connection ── */}
-      {tab === "connection" && (
-        <div className="max-w-xl space-y-0">
-          <Section>
-            <SectionLabel>API Connection</SectionLabel>
-            <p className="text-[12px] text-ink-600 mb-4">Saved in browser localStorage — no rebuild needed</p>
-            <FieldGroup>
-              <Field label="Server URL">
-                <KInput placeholder="http://localhost:8080" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
-              </Field>
-              <Field label="API Key" hint={`Found in server/kast.toml under [admin] api_key`}>
-                <KInput type="password" placeholder="your-api-key-from-kast.toml" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-              </Field>
-            </FieldGroup>
-            <div className="mt-4 flex items-center gap-2">
-              <SaveBtn onClick={saveConnection} />
-              <button onClick={testConnection} disabled={testing}
-                className="h-9 px-4 rounded-md border border-ink-800 hover:bg-ink-800 text-[13px] text-ink-200 transition-colors disabled:opacity-50">
-                {testing ? "Testing…" : "Test Connection"}
-              </button>
-            </div>
-          </Section>
-        </div>
-      )}
 
       {/* ── Server ── */}
       {tab === "server" && (

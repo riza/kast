@@ -5,6 +5,7 @@ package djmanager
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
 	"github.com/riza/kast/internal/mount"
+	"github.com/riza/kast/internal/playlist"
 	"github.com/riza/kast/internal/webrtcmanager"
 )
 
@@ -26,6 +28,14 @@ type session struct {
 	cancel     context.CancelFunc
 	ctx        context.Context // for checking intentional cancel
 	playlistID string
+	mode       string
+}
+
+// savedSession is the on-disk record for a single active AutoDJ session.
+type savedSession struct {
+	Mount      string `json:"mount"`
+	PlaylistID string `json:"playlist_id"`
+	Mode       string `json:"mode"`
 }
 
 // SessionInfo is a read-only snapshot of a running AutoDJ session.
@@ -37,22 +47,24 @@ type SessionInfo struct {
 // Manager maintains one session per mount name.
 type Manager struct {
 	mu        sync.Mutex
-	sessions  map[string]*session // key = "/radio1" etc.
+	sessions  map[string]*session         // key = "/radio1" etc.
 	history   map[string][]*library.Track // key = mount name, max 10 entries newest-first
 	segmenter *hls.Segmenter
 	mounts    *mount.Manager
+	db        *sql.DB
 	Trackers  *hls.TrackerRegistry
 	WebRTC    *webrtcmanager.Manager
 }
 
-// NewManager returns a Manager wired to the given segmenter and mount manager.
-func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager) *Manager {
+// NewManager returns a Manager wired to the given segmenter, mount manager, and db.
+func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB) *Manager {
 	return &Manager{
 		sessions:  make(map[string]*session),
 		history:   make(map[string][]*library.Track),
 		Trackers:  hls.NewTrackerRegistry(),
 		segmenter: segmenter,
 		mounts:    mounts,
+		db:        db,
 		WebRTC:    webrtcmanager.New(),
 	}
 }
@@ -146,6 +158,7 @@ func (m *Manager) Start(
 		cancel:     cancel,
 		ctx:        sessCtx,
 		playlistID: playlistID,
+		mode:       string(mode),
 	}
 	m.sessions[mountName] = sess
 	m.mounts.SetStatus(mountName, mount.StatusLive)
@@ -170,6 +183,7 @@ func (m *Manager) Start(
 		m.mu.Unlock()
 	}()
 
+	go m.saveState()
 	slog.Info("djmanager: started", "mount", mountName, "tracks", len(tracks), "mode", mode)
 	return nil
 }
@@ -189,6 +203,7 @@ func (m *Manager) Stop(mountName string) error {
 	m.Trackers.Stop(m.segmenter.MountDir(mountName))
 	m.WebRTC.StopMount(mountName)
 	m.mounts.SetStatus(mountName, mount.StatusIdle)
+	go m.saveState()
 	slog.Info("djmanager: stopped", "mount", mountName)
 	return nil
 }
@@ -259,6 +274,7 @@ func (m *Manager) StopAll() {
 		slog.Info("djmanager: stopped on shutdown", "mount", name)
 	}
 	m.WebRTC.StopAll()
+	go m.saveState()
 }
 
 // pushHistory prepends t to the history for mountName (max 10 entries).
@@ -292,4 +308,114 @@ func (m *Manager) RecentTracks(mountName string) []*library.Track {
 	out := make([]*library.Track, len(h))
 	copy(out, h)
 	return out
+}
+
+// saveState persists a snapshot of all active sessions to the database
+// so they can be restored on the next startup.
+func (m *Manager) saveState() {
+	if m.db == nil {
+		return
+	}
+	m.mu.Lock()
+	saved := make([]savedSession, 0, len(m.sessions))
+	for mountName, sess := range m.sessions {
+		saved = append(saved, savedSession{
+			Mount:      mountName,
+			PlaylistID: sess.playlistID,
+			Mode:       sess.mode,
+		})
+	}
+	m.mu.Unlock()
+
+	tx, err := m.db.Begin()
+	if err != nil {
+		slog.Warn("djmanager: saveState begin tx", "err", err)
+		return
+	}
+	if _, err := tx.Exec("DELETE FROM autodj_sessions"); err != nil {
+		tx.Rollback()
+		slog.Warn("djmanager: saveState delete", "err", err)
+		return
+	}
+	for _, s := range saved {
+		if _, err := tx.Exec(
+			"INSERT INTO autodj_sessions (mount, playlist_id, mode) VALUES (?, ?, ?)",
+			s.Mount, s.PlaylistID, s.Mode,
+		); err != nil {
+			slog.Warn("djmanager: saveState insert", "mount", s.Mount, "err", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		slog.Warn("djmanager: saveState commit", "err", err)
+	}
+}
+
+// Restore reads active sessions from the database and restarts them.
+// Call after the initial library scan so that track data is available.
+func (m *Manager) Restore(ctx context.Context, playlists *playlist.Manager, scanner *library.Scanner) {
+	if m.db == nil {
+		return
+	}
+	rows, err := m.db.Query("SELECT mount, playlist_id, mode FROM autodj_sessions")
+	if err != nil {
+		slog.Warn("djmanager: restore query", "err", err)
+		return
+	}
+	defer rows.Close()
+
+	var saved []savedSession
+	for rows.Next() {
+		var s savedSession
+		if err := rows.Scan(&s.Mount, &s.PlaylistID, &s.Mode); err != nil {
+			continue
+		}
+		saved = append(saved, s)
+	}
+	if err := rows.Err(); err != nil || len(saved) == 0 {
+		return
+	}
+
+	allTracks := scanner.Tracks()
+	byPath := make(map[string]*library.Track, len(allTracks))
+	for _, t := range allTracks {
+		byPath[t.Path] = t
+	}
+
+	for _, s := range saved {
+		pl, err := playlists.Get(s.PlaylistID)
+		if err != nil {
+			slog.Warn("djmanager: restore: playlist not found, skipping",
+				"mount", s.Mount, "playlist_id", s.PlaylistID)
+			continue
+		}
+
+		var tracks []*library.Track
+		for _, p := range pl.TrackPaths {
+			if t, ok := byPath[p]; ok {
+				tracks = append(tracks, t)
+			}
+		}
+		if len(tracks) == 0 {
+			slog.Warn("djmanager: restore: no tracks in library for playlist, skipping",
+				"mount", s.Mount, "playlist", pl.Name)
+			continue
+		}
+
+		mode := autodj.ModeSequential
+		if s.Mode == "shuffle" {
+			mode = autodj.ModeShuffle
+		}
+		playlistID := s.PlaylistID
+		onTrackChange := func(path string) {
+			if err := playlists.SetLastPlayed(playlistID, path); err != nil {
+				slog.Warn("djmanager: restore: failed to save last played", "err", err)
+			}
+		}
+
+		if err := m.Start(ctx, s.Mount, s.PlaylistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+			slog.Error("djmanager: restore: failed to start", "mount", s.Mount, "err", err)
+		} else {
+			slog.Info("djmanager: restored session", "mount", s.Mount, "playlist", pl.Name, "mode", s.Mode)
+		}
+	}
 }

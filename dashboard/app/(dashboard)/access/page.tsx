@@ -7,10 +7,8 @@ export default function AccessPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold">Access</h1>
-        <p className="text-sm text-muted-foreground">
-          API keys and source credentials
-        </p>
+        <h1 className="text-[24px] font-bold tracking-tight text-ink-100">Access & Auth</h1>
+        <p className="text-[12.5px] text-ink-400 mt-1">API keys and source credentials</p>
       </div>
 
       <Card>

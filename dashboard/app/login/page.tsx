@@ -2,18 +2,6 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { api } from "@/lib/api"
-import { setToken, isLoggedIn } from "@/lib/auth"
-
-function getServerBase() {
-  if (typeof window === "undefined") return ""
-  return (
-    localStorage.getItem("kast_api_url") ??
-    process.env.NEXT_PUBLIC_API_URL ??
-    "http://localhost:8080"
-  ).replace(/\/$/, "")
-}
-
 const WEAK_PASSWORDS = new Set([
   "admin", "password", "123456", "12345678", "1234", "test",
   "changeme", "changeme123", "pass", "qwerty", "letmein", "welcome",
@@ -36,31 +24,32 @@ export default function LoginPage() {
   const [weakWarn, setWeakWarn] = React.useState(false)
 
   React.useEffect(() => {
-    if (isLoggedIn()) { router.replace("/dashboard"); return }
-    const base = getServerBase()
-    fetch(`${base}/api/auth/setup`)
-      .then((r) => r.json())
-      .then((d) => setMode(d.required ? "setup" : "login"))
-      .catch(() => setMode("login"))
+    // Redirect if already authenticated (valid cookie).
+    fetch("/api/auth/me", { credentials: "include" }).then((r) => {
+      if (r.ok) { router.replace("/dashboard"); return }
+      fetch("/api/auth/setup")
+        .then((r) => r.json())
+        .then((d) => setMode(d.required ? "setup" : "login"))
+        .catch(() => setMode("login"))
+    }).catch(() => setMode("login"))
   }, [router])
 
   const doSubmit = async () => {
     setWeakWarn(false)
     setLoading(true)
     try {
-      const base = getServerBase()
       const endpoint = mode === "setup" ? "/api/auth/setup" : "/api/auth/login"
-      const res = await fetch(`${base}${endpoint}`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ username, password }),
+      const res = await fetch(endpoint, {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ username, password }),
+        credentials: "include",
       })
       const json = await res.json()
       if (!res.ok) {
         setError(json.error ?? "Something went wrong.")
         return
       }
-      setToken(json.token)
       router.replace("/dashboard")
     } catch {
       setError("Could not connect to server.")

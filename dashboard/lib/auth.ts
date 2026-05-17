@@ -1,5 +1,3 @@
-const TOKEN_KEY = "kast_auth_token"
-
 export type AuthUser = {
   id: string
   username: string
@@ -7,38 +5,20 @@ export type AuthUser = {
   created_at: string
 }
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY)
-}
-
-export function isLoggedIn(): boolean {
-  const token = getToken()
-  if (!token) return false
+export async function fetchMe(): Promise<AuthUser | null> {
   try {
-    // Decode payload (no verification — server will reject expired tokens)
-    const payload = JSON.parse(atob(token.split(".")[1]))
-    return payload.exp > Date.now() / 1000
+    const res = await fetch("/api/auth/me", { credentials: "include" })
+    if (!res.ok) return null
+    return res.json()
   } catch {
-    return false
+    return null
   }
 }
 
-export function currentUser(): AuthUser | null {
-  const token = getToken()
-  if (!token) return null
+export async function logout(): Promise<void> {
   try {
-    const payload = JSON.parse(atob(token.split(".")[1]))
-    return { id: payload.uid, username: payload.username, role: payload.role, created_at: "" }
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" })
   } catch {
-    return null
+    // ignore — redirect happens regardless
   }
 }

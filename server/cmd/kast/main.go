@@ -60,7 +60,7 @@ func run() error {
 	auth := authmanager.New(database, cfg.Admin.JWTSecret)
 
 	// ── Core services ────────────────────────────────────────────────────────
-	mounts, err := mount.NewManager(filepath.Join(dataDir, "mounts"))
+	mounts, err := mount.NewManager(database)
 	if err != nil {
 		return fmt.Errorf("mount manager: %w", err)
 	}
@@ -68,7 +68,7 @@ func run() error {
 	scanner, err := library.NewScanner(
 		cfg.Library.ScanDirs,
 		cfg.Library.AudioExtensions,
-		filepath.Join(dataDir, "library"),
+		database,
 	)
 	if err != nil {
 		return fmt.Errorf("library scanner: %w", err)
@@ -85,12 +85,12 @@ func run() error {
 
 	src := source.NewHandler()
 
-	playlists, err := playlist.NewManager(filepath.Join(dataDir, "playlists"))
+	playlists, err := playlist.NewManager(database)
 	if err != nil {
 		return fmt.Errorf("playlist manager: %w", err)
 	}
 
-	djm := djmanager.NewManager(segmenter, mounts)
+	djm := djmanager.NewManager(segmenter, mounts, database)
 
 	importDir := "./data/music"
 	if len(cfg.Library.ScanDirs) > 0 {
@@ -101,13 +101,16 @@ func run() error {
 	// ── Fiber app ────────────────────────────────────────────────────────────
 	app := api.NewApp(cfg, auth, mounts, scanner, segmenter, src, playlists, djm, ytm)
 
-	// ── Initial library scan (background) ────────────────────────────────────
+	// ── Initial library scan + AutoDJ restore (background) ───────────────────
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		if err := scanner.Scan(ctx); err != nil {
 			slog.Error("initial library scan", "err", err)
 		}
+		// Restore AutoDJ sessions that were active before the last shutdown.
+		// Runs after the scan so that track data is available.
+		djm.Restore(context.Background(), playlists, scanner)
 	}()
 
 	// ── Start servers ────────────────────────────────────────────────────────

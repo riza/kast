@@ -632,10 +632,8 @@ export default function LibraryPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Library</h1>
-          <p className="text-sm text-muted-foreground">
-            Music files available for playlists and AutoDJ
-          </p>
+          <h1 className="text-[24px] font-bold tracking-tight text-ink-100">Library</h1>
+          <p className="text-[12.5px] text-ink-400 mt-1">Music files available for playlists and AutoDJ</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={handleScan} disabled={scanning}>

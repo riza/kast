@@ -1,45 +1,6 @@
 // Typed fetch client for the Kast server API.
-// Priority: localStorage → NEXT_PUBLIC_* build-time env vars → defaults.
-// This lets users set the API URL and key from the Settings page without
-// rebuilding the Docker image.
-
-const LS_URL_KEY   = "kast_api_url"
-const LS_KEY_KEY   = "kast_api_key"
-const LS_TOKEN_KEY = "kast_auth_token"
-
-function getBase(): string {
-  if (typeof window !== "undefined") {
-    const stored = localStorage.getItem(LS_URL_KEY)
-    if (stored) return stored.replace(/\/$/, "")
-  }
-  return (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/$/, "")
-}
-
-// JWT token takes priority over static API key.
-function getKey(): string {
-  if (typeof window !== "undefined") {
-    const jwt = localStorage.getItem(LS_TOKEN_KEY)
-    if (jwt) return jwt
-    const stored = localStorage.getItem(LS_KEY_KEY)
-    if (stored) return stored
-  }
-  return process.env.NEXT_PUBLIC_API_KEY ?? ""
-}
-
-/** Persist connection settings to localStorage. */
-export function saveConnectionSettings(url: string, key: string) {
-  localStorage.setItem(LS_URL_KEY, url.replace(/\/$/, ""))
-  localStorage.setItem(LS_KEY_KEY, key)
-}
-
-/** Read current connection settings (for the Settings UI). */
-export function loadConnectionSettings(): { url: string; key: string } {
-  if (typeof window === "undefined") return { url: "", key: "" }
-  return {
-    url: localStorage.getItem(LS_URL_KEY) ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
-    key: localStorage.getItem(LS_KEY_KEY) ?? process.env.NEXT_PUBLIC_API_KEY ?? "",
-  }
-}
+// Auth is via HttpOnly cookie (set by Go server, forwarded through Next.js proxy).
+// All API calls use relative URLs so they go through the Next.js /api/* rewrite.
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -53,20 +14,16 @@ export class APIError extends Error {
 // ── Core fetch helper ────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const base = getBase()
-  const key  = getKey()
-  const res = await fetch(base + path, {
+  const res = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
       ...(init?.headers ?? {}),
     },
+    credentials: "include",
     cache: "no-store",
   })
   if (res.status === 401 && typeof window !== "undefined") {
-    // Token expired or invalid — clear and redirect to login.
-    localStorage.removeItem(LS_TOKEN_KEY)
     window.location.href = "/login"
     return undefined as T
   }
@@ -259,18 +216,25 @@ export type APIUser = {
 }
 
 export type LoginResponse = {
-  token: string
-  user:  APIUser
+  user: APIUser
+}
+
+export type APIListener = {
+  ip:           string
+  mount:        string
+  last_seen:    string
+  country_code: string
 }
 
 export const api = {
   auth: {
-    /** POST /api/auth/login — public, no token required */
+    /** POST /api/auth/login — sets HttpOnly cookie on success */
     login: (username: string, password: string) =>
-      fetch(getBase() + "/api/auth/login", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ username, password }),
+      fetch("/api/auth/login", {
+        method:      "POST",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ username, password }),
+        credentials: "include",
       }).then(async (r) => {
         if (!r.ok) throw new APIError(r.status, "invalid credentials")
         return r.json() as Promise<LoginResponse>
@@ -293,12 +257,20 @@ export const api = {
   /** GET /api/status */
   status: () => apiFetch<APIStatus>("/api/status"),
 
+  /** GET /api/listeners */
+  listeners: {
+    list: () => apiFetch<APIListener[]>("/api/listeners"),
+  },
+
   /** GET /api/autodj/sessions — all active sessions across mounts */
   autoDJSessions: () => apiFetch<APIAutoDJSession[]>("/api/autodj/sessions"),
 
   mounts: {
     /** GET /api/mounts */
     list: () => apiFetch<APIMount[]>("/api/mounts"),
+
+    /** GET /api/mounts/{name} */
+    get: (name: string) => apiFetch<APIMount>(`/api/mounts/${slug(name)}`),
 
     /** POST /api/mounts */
     create: (body: CreateMountBody) =>
@@ -358,14 +330,12 @@ export const api = {
      */
     upload: (files: File[], onProgress?: (pct: number) => void): Promise<APIUploadResult> => {
       return new Promise((resolve, reject) => {
-        const base = getBase()
-        const key  = getKey()
-        const fd   = new FormData()
+        const fd = new FormData()
         files.forEach((f) => fd.append("files", f))
 
         const xhr = new XMLHttpRequest()
-        xhr.open("POST", base + "/api/library/upload")
-        if (key) xhr.setRequestHeader("Authorization", `Bearer ${key}`)
+        xhr.open("POST", "/api/library/upload")
+        // Cookie is sent automatically for same-origin requests.
 
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable && onProgress) {

@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/phuslu/iploc"
 	"github.com/riza/kast/internal/api/handler"
 	"github.com/riza/kast/internal/api/middleware"
 	"github.com/riza/kast/internal/api/respond"
@@ -56,6 +57,35 @@ func (lt *listenerTracker) touch(mountName, ip string) int {
 		}
 	}
 	return len(lt.entries[mountName])
+}
+
+type listenerEntry struct {
+	IP          string    `json:"ip"`
+	Mount       string    `json:"mount"`
+	LastSeen    time.Time `json:"last_seen"`
+	CountryCode string    `json:"country_code"`
+}
+
+// all returns every active listener across all mounts, expiring stale entries.
+func (lt *listenerTracker) all() []listenerEntry {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	cutoff := time.Now().Add(-lt.ttl)
+	var out []listenerEntry
+	for mount, ips := range lt.entries {
+		for ip, t := range ips {
+			if t.Before(cutoff) {
+				delete(ips, ip)
+				continue
+			}
+			e := listenerEntry{IP: ip, Mount: mount, LastSeen: t}
+			if parsed := net.ParseIP(ip); parsed != nil {
+				e.CountryCode = iploc.Country(parsed)
+			}
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // sweep expires stale entries and returns a map of mountName → current count.
@@ -339,6 +369,7 @@ func NewApp(
 	app.Get("/api/auth/setup", authH.SetupStatus)
 	app.Post("/api/auth/setup", authH.Setup)
 	app.Post("/api/auth/login", authH.Login)
+	app.Post("/api/auth/logout", authH.Logout)
 
 	// ── Admin API — Bearer token required ───────────────────────────────────
 	api := app.Group("/api", limiter.New(limiter.Config{
@@ -367,6 +398,15 @@ func NewApp(
 	yth  := &handler.YTImport{Manager: ytm}
 
 	api.Get("/status", handler.Status)
+
+	api.Get("/listeners", func(c *fiber.Ctx) error {
+		entries := listenerTrack.all()
+		if entries == nil {
+			entries = []listenerEntry{}
+		}
+		return respond.OK(c, entries)
+	})
+
 
 	api.Get("/mounts", mh.List)
 	api.Post("/mounts", mh.Create)

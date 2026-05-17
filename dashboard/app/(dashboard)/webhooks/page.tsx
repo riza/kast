@@ -7,10 +7,8 @@ export default function WebhooksPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold">Webhooks</h1>
-        <p className="text-sm text-muted-foreground">
-          Event subscriptions and delivery logs
-        </p>
+        <h1 className="text-[24px] font-bold tracking-tight text-ink-100">Webhooks</h1>
+        <p className="text-[12.5px] text-ink-400 mt-1">Event subscriptions and delivery logs</p>
       </div>
 
       <Card>

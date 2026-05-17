@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { isLoggedIn, clearToken, currentUser } from "@/lib/auth"
+import { fetchMe, logout, type AuthUser } from "@/lib/auth"
 import {
   LayoutDashboard,
   Radio,
@@ -35,10 +35,6 @@ const navItems: NavItem[] = [
   { path: "/access",    label: "Access & Auth", icon: KeyRound },
   { path: "/settings",  label: "Settings",    icon: Settings },
 ]
-
-const PAGE_LABELS: Record<string, string> = Object.fromEntries(
-  navItems.map((n) => [n.path, n.label])
-)
 
 // ── Navigation Pending Context ──
 
@@ -95,23 +91,35 @@ function GithubIcon({ className }: { className?: string }) {
   )
 }
 
+// ── User context ──
+
+const UserContext = React.createContext<AuthUser | null>(null)
+
 // ── Auth guard ──
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [checked, setChecked] = React.useState(false)
-  const [authed, setAuthed]   = React.useState(false)
+  const [state, setState] = React.useState<"loading" | "authed" | "unauthed">("loading")
+  const [user, setUser]   = React.useState<AuthUser | null>(null)
 
   React.useEffect(() => {
-    if (isLoggedIn()) {
-      setAuthed(true)
-    } else {
-      window.location.replace("/login")
-    }
-    setChecked(true)
+    fetchMe().then((u) => {
+      if (u) { setUser(u); setState("authed") }
+      else     setState("unauthed")
+    })
   }, [])
 
-  if (!checked || !authed) return null
-  return <>{children}</>
+  if (state === "loading") {
+    return (
+      <div className="min-h-screen bg-ink-950 flex items-center justify-center">
+        <div className="h-5 w-5 border-2 border-ink-800 border-t-k-500 rounded-full animate-spin" />
+      </div>
+    )
+  }
+  if (state === "unauthed") {
+    if (typeof window !== "undefined") window.location.replace("/login")
+    return null
+  }
+  return <UserContext.Provider value={user}>{children}</UserContext.Provider>
 }
 
 // ── Shell ──
@@ -120,11 +128,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { pendingPath } = React.useContext(NavigationContext)
   const activePath = pendingPath ?? pathname
-  const pageLabel = PAGE_LABELS[pathname] ?? "Kast"
-  const user = currentUser()
+  const user = React.useContext(UserContext)
 
-  const handleLogout = () => {
-    clearToken()
+  const handleLogout = async () => {
+    await logout()
     window.location.href = "/login"
   }
 
@@ -185,7 +192,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Header */}
         <header className="h-14 shrink-0 border-b border-ink-800 bg-ink-900 flex items-center px-6 gap-3">
-          <span className="text-[13px] font-medium text-ink-100">{pageLabel}</span>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2">
