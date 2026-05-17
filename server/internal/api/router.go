@@ -57,6 +57,23 @@ func (lt *listenerTracker) touch(mountName, ip string) int {
 	return len(lt.entries[mountName])
 }
 
+// sweep expires stale entries and returns a map of mountName → current count.
+func (lt *listenerTracker) sweep() map[string]int {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	cutoff := time.Now().Add(-lt.ttl)
+	counts := make(map[string]int, len(lt.entries))
+	for mount, ips := range lt.entries {
+		for k, v := range ips {
+			if v.Before(cutoff) {
+				delete(ips, k)
+			}
+		}
+		counts[mount] = len(ips)
+	}
+	return counts
+}
+
 // NewApp builds and returns the Fiber application.
 func NewApp(
 	cfg *config.Config,
@@ -87,6 +104,19 @@ func NewApp(
 
 	// ── HLS streaming — unauthenticated, high-volume ─────────────────────────
 	listenerTrack := newListenerTracker(30 * time.Second)
+
+	// Background sweep: expire stale listener entries and push the updated
+	// counts back to the mount manager so idle mounts read 0, not a stale value.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			for mountName, count := range listenerTrack.sweep() {
+				mounts.SetListeners(mountName, count)
+			}
+		}
+	}()
+
 	app.Get("/hls/:mount/*", limiter.New(limiter.Config{
 		Max:        300,
 		Expiration: time.Minute,
