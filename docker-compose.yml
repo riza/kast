@@ -1,5 +1,6 @@
 volumes:
   kast_config:  # Persists generated kast.toml across container restarts
+  kast_data:    # Persists kast.db (SQLite); subdirs are overlaid by bind mounts below
 
 services:
   server:
@@ -14,12 +15,12 @@ services:
       - "8080:8080"
     volumes:
       - kast_config:/app/config
+      - kast_data:/app/data
       - ./server/data/music:/app/data/music
       - ./server/data/hls:/app/data/hls
       - ./server/data/mounts:/app/data/mounts
       - ./server/data/library:/app/data/library
       - ./server/data/playlists:/app/data/playlists
-      - ./server/data/kast.db:/app/data/kast.db
     restart: unless-stopped
     environment:
       - GOGC=100
