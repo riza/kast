@@ -16,10 +16,22 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
+// Config holds optional WebRTC settings.
+type Config struct {
+	// NATIPs maps the server's private IP(s) to their public counterparts.
+	// Required when running behind NAT or inside Docker. Example: ["1.2.3.4"].
+	NATIPs []string
+	// UDPPortMin/UDPPortMax constrain the ICE UDP ephemeral port range.
+	// Both must be > 0 and exposed via Docker/firewall for remote WebRTC.
+	UDPPortMin uint16
+	UDPPortMax uint16
+}
+
 // peerEntry holds one browser WebRTC connection and the sender RTP track.
 type peerEntry struct {
 	pc    *webrtc.PeerConnection
 	track *webrtc.TrackLocalStaticRTP
+	once  sync.Once
 }
 
 // mountState holds the shared RTP track and all connected peers for one mount.
@@ -49,7 +61,7 @@ type Manager struct {
 }
 
 // New returns a Manager ready to accept mounts and WHEP peers.
-func New() *Manager {
+func New(cfg Config) *Manager {
 	me := &webrtc.MediaEngine{}
 	// Register Opus as the sole audio codec (payload type 111, standard for WebRTC).
 	if err := me.RegisterCodec(webrtc.RTPCodecParameters{
@@ -64,9 +76,28 @@ func New() *Manager {
 		panic("webrtcmanager: register opus codec: " + err.Error())
 	}
 
+	se := webrtc.SettingEngine{}
+
+	// Map private → public IPs so ICE candidates are reachable through NAT/Docker.
+	if len(cfg.NATIPs) > 0 {
+		se.SetNAT1To1IPs(cfg.NATIPs, webrtc.ICECandidateTypeHost)
+		slog.Info("webrtc: NAT1To1 IPs configured", "ips", cfg.NATIPs)
+	}
+
+	// Limit UDP ephemeral ports so they can be explicitly exposed in Docker/firewall.
+	if cfg.UDPPortMin > 0 && cfg.UDPPortMax > cfg.UDPPortMin {
+		if err := se.SetEphemeralUDPPortRange(cfg.UDPPortMin, cfg.UDPPortMax); err != nil {
+			slog.Warn("webrtc: invalid UDP port range, using system default",
+				"min", cfg.UDPPortMin, "max", cfg.UDPPortMax, "err", err)
+		} else {
+			slog.Info("webrtc: UDP port range configured",
+				"min", cfg.UDPPortMin, "max", cfg.UDPPortMax)
+		}
+	}
+
 	return &Manager{
 		mounts: make(map[string]*mountState),
-		api:    webrtc.NewAPI(webrtc.WithMediaEngine(me)),
+		api:    webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se)),
 	}
 }
 
@@ -151,6 +182,30 @@ func (m *Manager) AddPeer(mountName, offerSDP string) (string, error) {
 
 	entry := &peerEntry{pc: pc, track: ms.track}
 
+	// Register the ICE state callback before any descriptions are set so we
+	// never miss an early state change.
+	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
+		slog.Debug("webrtc: ice state", "mount", mountName, "state", state)
+		switch state {
+		case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
+			slog.Info("webrtc: peer ice connected", "mount", mountName)
+		case webrtc.ICEConnectionStateFailed:
+			// ICEConnectionStateFailed is terminal — all candidate pairs exhausted.
+			// ICEConnectionStateDisconnected is transient; pion retries automatically.
+			entry.once.Do(func() {
+				ms.removePeer(entry)
+				pc.Close()
+				slog.Info("webrtc: peer disconnected", "mount", mountName)
+			})
+		case webrtc.ICEConnectionStateClosed:
+			// Triggered when pc.Close() is called (e.g. from StopMount).
+			entry.once.Do(func() {
+				ms.removePeer(entry)
+				slog.Info("webrtc: peer disconnected", "mount", mountName)
+			})
+		}
+	})
+
 	if _, err := pc.AddTrack(ms.track); err != nil {
 		pc.Close()
 		return "", fmt.Errorf("webrtcmanager: add track: %w", err)
@@ -188,18 +243,7 @@ func (m *Manager) AddPeer(mountName, offerSDP string) (string, error) {
 	ms.peers = append(ms.peers, entry)
 	ms.mu.Unlock()
 
-	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		slog.Debug("webrtc: ice state", "mount", mountName, "state", state)
-		if state == webrtc.ICEConnectionStateFailed ||
-			state == webrtc.ICEConnectionStateDisconnected ||
-			state == webrtc.ICEConnectionStateClosed {
-			ms.removePeer(entry)
-			pc.Close()
-			slog.Info("webrtc: peer disconnected", "mount", mountName)
-		}
-	})
-
-	slog.Info("webrtc: peer connected", "mount", mountName)
+	slog.Info("webrtc: peer whep connected", "mount", mountName)
 	return pc.LocalDescription().SDP, nil
 }
 

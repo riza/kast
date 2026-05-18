@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Status represents the live state of a mount.
@@ -185,13 +186,18 @@ func (m *Manager) Create(req CreateRequest) (*Mount, error) {
 		protocol = "HLS"
 	}
 
+	pwHash, err := bcrypt.GenerateFromPassword([]byte(req.SourcePassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
 	mt := &Mount{
 		ID:             newID(),
 		Name:           req.Name,
 		Description:    req.Description,
 		Genre:          req.Genre,
 		Website:        req.Website,
-		SourcePassword: req.SourcePassword,
+		SourcePassword: string(pwHash),
 		Protocol:       protocol,
 		Codec:          codec,
 		Bitrate:        bitrate,
@@ -338,15 +344,7 @@ func (m *Manager) VerifySourcePassword(name, password string) bool {
 	if !ok {
 		return false
 	}
-	a, b := []byte(mt.SourcePassword), []byte(password)
-	if len(a) != len(b) {
-		return false
-	}
-	var diff byte
-	for i := range a {
-		diff |= a[i] ^ b[i]
-	}
-	return diff == 0
+	return bcrypt.CompareHashAndPassword([]byte(mt.SourcePassword), []byte(password)) == nil
 }
 
 // ── internal ──────────────────────────────────────────────────────────────────

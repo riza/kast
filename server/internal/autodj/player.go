@@ -160,8 +160,10 @@ func (p *Player) loop(ctx context.Context, out io.WriteCloser) {
 // Security: path is pre-validated by the library scanner; args are explicit.
 func (p *Player) playTrack(ctx context.Context, t *library.Track, out io.Writer) error {
 	// Validate the path is still within allowed roots (defence-in-depth).
-	if strings.Contains(t.Path, "..") {
-		return fmt.Errorf("autodj: suspicious path rejected: %s", t.Path)
+	for _, part := range strings.Split(filepath.ToSlash(t.Path), "/") {
+		if part == ".." {
+			return fmt.Errorf("autodj: suspicious path rejected: %s", t.Path)
+		}
 	}
 	if _, err := os.Stat(t.Path); err != nil {
 		return fmt.Errorf("autodj: stat %q: %w", t.Path, err)

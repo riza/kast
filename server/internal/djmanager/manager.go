@@ -60,7 +60,7 @@ type Manager struct {
 }
 
 // NewManager returns a Manager wired to the given segmenter, mount manager, db, playlists, and scanner.
-func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, playlists *playlist.Manager, scanner *library.Scanner) *Manager {
+func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, playlists *playlist.Manager, scanner *library.Scanner, webrtcCfg webrtcmanager.Config) *Manager {
 	return &Manager{
 		sessions:  make(map[string]*session),
 		history:   make(map[string][]*library.Track),
@@ -70,7 +70,7 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, pla
 		db:        db,
 		playlists: playlists,
 		scanner:   scanner,
-		WebRTC:    webrtcmanager.New(),
+		WebRTC:    webrtcmanager.New(webrtcCfg),
 	}
 }
 

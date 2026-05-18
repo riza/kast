@@ -121,8 +121,8 @@ func (m *Manager) CreateUser(username, password string, role Role) (*User, error
 	if username == "" || password == "" {
 		return nil, errors.New("username and password are required")
 	}
-	if len(password) < 4 {
-		return nil, errors.New("password must be at least 4 characters")
+	if len(password) < 8 {
+		return nil, errors.New("password must be at least 8 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -207,8 +207,8 @@ func (m *Manager) ChangeRole(id string, role Role) error {
 
 // ChangePassword updates a user's password.
 func (m *Manager) ChangePassword(id, newPassword string) error {
-	if len(newPassword) < 4 {
-		return errors.New("password must be at least 4 characters")
+	if len(newPassword) < 8 {
+		return errors.New("password must be at least 8 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {

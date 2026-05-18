@@ -21,6 +21,10 @@ api_key = "CHANGE_ME_BEFORE_PRODUCTION"
 # Secret used to sign JWTs. Generate with: openssl rand -hex 32
 jwt_secret = "CHANGE_ME_BEFORE_PRODUCTION"
 
+# Set to true when serving over HTTPS (directly or behind a reverse proxy).
+# Ensures the session cookie is only sent over encrypted connections.
+secure_cookies = false
+
 [hls]
 # Length of each HLS segment in seconds (4-10 recommended)
 segment_duration = 6
@@ -55,6 +59,18 @@ key_file  = ""
 cert_dir  = "./data/certs"
 # Address for the HTTPS listener (default :443).
 http_addr = ":443"
+
+[webrtc]
+# Public IP(s) for WebRTC ICE candidates. Required when the server is behind
+# NAT or running in Docker — without this, remote browsers can't reach the
+# server's ICE candidates and the WebRTC connection will time out.
+# Set to your server's public IP address.
+nat_ips = []
+# UDP port range for ICE. Both must be non-zero and exposed via Docker/firewall.
+# Add the matching range to your docker-compose ports:
+#   - "40000-40100:40000-40100/udp"
+udp_port_min = 0
+udp_port_max = 0
 
 [log]
 # debug | info | warn | error

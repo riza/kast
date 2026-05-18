@@ -81,5 +81,18 @@ if [ -n "$KAST_SSL_DOMAINS" ]; then
     sed -i "s|^domains = \[.*\]|domains = ${DOMAIN_ARRAY}|" "$CONFIG"
 fi
 
+if [ -n "$KAST_WEBRTC_NAT_IPS" ]; then
+    NAT_ARRAY=$(python3 -c "import sys, json; print(json.dumps([x.strip() for x in sys.argv[1].split(',')]))" "$KAST_WEBRTC_NAT_IPS")
+    sed -i "s|^nat_ips = \[.*\]|nat_ips = ${NAT_ARRAY}|" "$CONFIG"
+fi
+
+if [ -n "$KAST_WEBRTC_UDP_PORT_MIN" ]; then
+    sed -i "s|^udp_port_min = .*|udp_port_min = ${KAST_WEBRTC_UDP_PORT_MIN}|" "$CONFIG"
+fi
+
+if [ -n "$KAST_WEBRTC_UDP_PORT_MAX" ]; then
+    sed -i "s|^udp_port_max = .*|udp_port_max = ${KAST_WEBRTC_UDP_PORT_MAX}|" "$CONFIG"
+fi
+
 # Drop to non-root user and start the server.
 exec su-exec kast:1001 "$@"

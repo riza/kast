@@ -15,6 +15,9 @@ services:
       - "8080:8080"
       # Uncomment for HTTPS — also uncomment the ./certs volume below:
       # - "443:443"
+      # WebRTC ICE UDP ports — required for remote WHEP (WebRTC) listeners.
+      # Must match udp_port_min/udp_port_max in kast.toml (or KAST_WEBRTC_* vars).
+      # - "40000-40100:40000-40100/udp"
     volumes:
       - kast_config:/app/config
       - kast_data:/app/data
@@ -42,6 +45,12 @@ services:
       - KAST_SSL_KEY_FILE=${KAST_SSL_KEY_FILE:-}
       - KAST_SSL_DOMAINS=${KAST_SSL_DOMAINS:-}
       - KAST_TRUST_PROXY=${KAST_TRUST_PROXY:-}
+      # WebRTC/WHEP configuration — required for remote WebRTC listeners.
+      # Set KAST_WEBRTC_NAT_IPS to your server's public IP (comma-separated).
+      # Set port range to match the UDP ports exposed above.
+      - KAST_WEBRTC_NAT_IPS=${KAST_WEBRTC_NAT_IPS:-}
+      - KAST_WEBRTC_UDP_PORT_MIN=${KAST_WEBRTC_UDP_PORT_MIN:-}
+      - KAST_WEBRTC_UDP_PORT_MAX=${KAST_WEBRTC_UDP_PORT_MAX:-}
 
   dashboard:
     build:

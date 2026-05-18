@@ -25,6 +25,7 @@ import (
 	"github.com/riza/kast/internal/mount"
 	"github.com/riza/kast/internal/playlist"
 	"github.com/riza/kast/internal/source"
+	"github.com/riza/kast/internal/webrtcmanager"
 	"github.com/riza/kast/internal/ytimport"
 )
 
@@ -100,7 +101,11 @@ func run() error {
 		return fmt.Errorf("playlist manager: %w", err)
 	}
 
-	djm := djmanager.NewManager(segmenter, mounts, database, playlists, scanner)
+	djm := djmanager.NewManager(segmenter, mounts, database, playlists, scanner, webrtcmanager.Config{
+		NATIPs:     cfg.WebRTC.NATIPs,
+		UDPPortMin: cfg.WebRTC.UDPPortMin,
+		UDPPortMax: cfg.WebRTC.UDPPortMax,
+	})
 
 	importDir := "./data/music"
 	if len(cfg.Library.ScanDirs) > 0 {

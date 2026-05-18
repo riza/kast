@@ -11,7 +11,8 @@ import (
 const cookieName = "kast_token"
 
 type Auth struct {
-	Manager *authmanager.Manager
+	Manager       *authmanager.Manager
+	SecureCookies bool
 }
 
 func (h *Auth) SetupStatus(c *fiber.Ctx) error {
@@ -30,7 +31,7 @@ func (h *Auth) Setup(c *fiber.Ctx) error {
 	if err != nil {
 		return respond.Error(c, fiber.StatusBadRequest, err.Error())
 	}
-	setAuthCookie(c, token)
+	h.setAuthCookie(c, token)
 	return respond.OK(c, fiber.Map{"user": user})
 }
 
@@ -46,7 +47,7 @@ func (h *Auth) Login(c *fiber.Ctx) error {
 	if err != nil {
 		return respond.Error(c, fiber.StatusUnauthorized, "invalid credentials")
 	}
-	setAuthCookie(c, token)
+	h.setAuthCookie(c, token)
 	return respond.OK(c, fiber.Map{"user": user})
 }
 
@@ -58,6 +59,7 @@ func (h *Auth) Logout(c *fiber.Ctx) error {
 		Expires:  time.Unix(0, 0),
 		HTTPOnly: true,
 		SameSite: "Lax",
+		Secure:   h.SecureCookies,
 	})
 	return respond.OK(c, fiber.Map{"status": "ok"})
 }
@@ -79,7 +81,7 @@ func (h *Auth) Me(c *fiber.Ctx) error {
 	return respond.OK(c, user)
 }
 
-func setAuthCookie(c *fiber.Ctx, token string) {
+func (h *Auth) setAuthCookie(c *fiber.Ctx, token string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     cookieName,
 		Value:    token,
@@ -87,5 +89,6 @@ func setAuthCookie(c *fiber.Ctx, token string) {
 		MaxAge:   86400, // 24h
 		HTTPOnly: true,
 		SameSite: "Lax",
+		Secure:   h.SecureCookies,
 	})
 }

@@ -20,6 +20,7 @@ type Config struct {
 	Library LibraryConfig `toml:"library"`
 	AutoDJ  AutoDJConfig  `toml:"autodj"`
 	SSL     SSLConfig     `toml:"ssl"`
+	WebRTC  WebRTCConfig  `toml:"webrtc"`
 	Log     LogConfig     `toml:"log"`
 }
 
@@ -35,8 +36,9 @@ type ServerConfig struct {
 }
 
 type AdminConfig struct {
-	APIKey    string `toml:"api_key"`
-	JWTSecret string `toml:"jwt_secret"`
+	APIKey        string `toml:"api_key"`
+	JWTSecret     string `toml:"jwt_secret"`
+	SecureCookies bool   `toml:"secure_cookies"`
 }
 
 type SSLConfig struct {
@@ -68,6 +70,17 @@ type AutoDJConfig struct {
 type LogConfig struct {
 	Level  string `toml:"level"`
 	Format string `toml:"format"`
+}
+
+type WebRTCConfig struct {
+	// NATIPs maps the server's private IP(s) to their publicly reachable
+	// equivalents. Required when the server is behind NAT or Docker.
+	// Example: ["1.2.3.4"]
+	NATIPs []string `toml:"nat_ips"`
+	// UDPPortMin/UDPPortMax bound the ICE ephemeral UDP port range.
+	// Both must be > 0 and exposed via Docker/firewall for remote WebRTC.
+	UDPPortMin uint16 `toml:"udp_port_min"`
+	UDPPortMax uint16 `toml:"udp_port_max"`
 }
 
 // Load reads and validates a TOML config file.

@@ -380,10 +380,20 @@ func NewApp(
 	})
 
 	// ── Auth endpoints — public ─────────────────────────────────────────────
-	authH := &handler.Auth{Manager: auth}
+	authH := &handler.Auth{
+		Manager:       auth,
+		SecureCookies: cfg.SSL.Enabled || cfg.Admin.SecureCookies,
+	}
+	loginLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+	})
 	app.Get("/api/auth/setup", authH.SetupStatus)
 	app.Post("/api/auth/setup", authH.Setup)
-	app.Post("/api/auth/login", authH.Login)
+	app.Post("/api/auth/login", loginLimiter, authH.Login)
 	app.Post("/api/auth/logout", authH.Logout)
 
 	// ── Admin API — Bearer token required ───────────────────────────────────
