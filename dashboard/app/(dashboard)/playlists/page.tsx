@@ -472,12 +472,6 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
       if (handled) return
       handled = true
 
-      if (j.status === "error") {
-        toast.error("Some downloads failed — check that yt-dlp is installed")
-        setStep("preview")
-        return
-      }
-
       setCreating(true)
       await new Promise((r) => setTimeout(r, 3000))
 
@@ -486,10 +480,13 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
         .map((i) => i.path as string)
 
       if (paths.length === 0) {
-        toast.error("No tracks were downloaded successfully")
+        toast.error("No tracks were downloaded successfully — check that yt-dlp is installed")
         setCreating(false)
+        setStep("preview")
         return
       }
+
+      const failedCount = j.items.filter((i) => i.status === "error").length
 
       try {
         const pl = await api.playlists.create({
@@ -499,7 +496,10 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
           track_paths: paths,
         })
         onCreated(adaptApiPlaylist(pl))
-        toast.success(`"${capturedName}" created with ${paths.length} track${paths.length !== 1 ? "s" : ""}`)
+        const label = failedCount > 0
+          ? `${paths.length} track${paths.length !== 1 ? "s" : ""} (${failedCount} failed)`
+          : `${paths.length} track${paths.length !== 1 ? "s" : ""}`
+        toast.success(`"${capturedName}" created with ${label}`)
         reset()
         onOpenChange(false)
       } catch (err: unknown) {
