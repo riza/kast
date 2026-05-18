@@ -8,12 +8,14 @@ import (
 	"github.com/riza/kast/internal/api/respond"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/mount"
+	"github.com/riza/kast/internal/webhook"
 )
 
 // Mounts groups mount-related handlers with shared dependencies.
 type Mounts struct {
 	Manager   *mount.Manager
 	DJManager *djmanager.Manager
+	Webhooks  *webhook.Manager
 }
 
 // List godoc: GET /api/mounts
@@ -43,6 +45,9 @@ func (h *Mounts) Create(c *fiber.Ctx) error {
 	}
 	if err != nil {
 		return respond.Error(c, fiber.StatusBadRequest, err.Error())
+	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("mount.created", mt)
 	}
 	return respond.Created(c, mt)
 }
@@ -82,6 +87,9 @@ func (h *Mounts) Update(c *fiber.Ctx) error {
 		}
 	}
 
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("mount.metadata.updated", mt)
+	}
 	type updateResp struct {
 		*mount.Mount
 		AutoDJRestarted bool `json:"autodj_restarted"`
@@ -94,6 +102,9 @@ func (h *Mounts) Delete(c *fiber.Ctx) error {
 	name := "/" + c.Params("name")
 	if err := h.Manager.Delete(name); errors.Is(err, mount.ErrNotFound) {
 		return respond.Error(c, fiber.StatusNotFound, "mount not found")
+	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("mount.deleted", fiber.Map{"name": name})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }

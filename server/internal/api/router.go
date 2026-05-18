@@ -19,14 +19,18 @@ import (
 	"github.com/riza/kast/internal/api/handler"
 	"github.com/riza/kast/internal/api/middleware"
 	"github.com/riza/kast/internal/api/respond"
+	"github.com/riza/kast/internal/apikey"
 	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/config"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
+	"github.com/riza/kast/internal/livesource"
 	"github.com/riza/kast/internal/mount"
 	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/schedule"
 	"github.com/riza/kast/internal/source"
+	"github.com/riza/kast/internal/webhook"
 	"github.com/riza/kast/internal/ytimport"
 )
 
@@ -124,6 +128,10 @@ func NewApp(
 	playlists *playlist.Manager,
 	djm *djmanager.Manager,
 	ytm *ytimport.Manager,
+	webhooks *webhook.Manager,
+	lsm *livesource.Manager,
+	schedules *schedule.Manager,
+	keys *apikey.Manager,
 ) *fiber.App {
 	fiberCfg := fiber.Config{
 		AppName:               "Kast",
@@ -155,13 +163,22 @@ func NewApp(
 	// Background sweep: expire stale entries and push counts to every mount.
 	// Iterating all mounts (not just those in the tracker) ensures a mount
 	// with no recent requests gets written as 0, not left at a stale value.
+	prevCounts := make(map[string]int)
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			counts := listenerTrack.sweep()
 			for _, mt := range mounts.List() {
-				mounts.SetListeners(mt.Name, counts[mt.Name])
+				n := counts[mt.Name]
+				mounts.SetListeners(mt.Name, n)
+				if webhooks != nil && n != prevCounts[mt.Name] {
+					prevCounts[mt.Name] = n
+					webhooks.Emit("listener.count.changed", map[string]any{
+						"mount":     mt.Name,
+						"listeners": n,
+					})
+				}
 			}
 		}
 	}()
@@ -374,10 +391,18 @@ func NewApp(
 			c.Set("WWW-Authenticate", `Bearer realm="kast-source"`)
 			return c.Status(fiber.StatusUnauthorized).SendString("unauthorized")
 		}
-		// Adapt Fiber context to net/http for the source handler (streaming body).
+		if err := lsm.Connect(mountName); err != nil {
+			return c.Status(fiber.StatusConflict).SendString(err.Error())
+		}
+		defer lsm.Disconnect(mountName)
 		src.ServeHTTPFiber(c, mountName)
 		return nil
 	})
+
+	// ── Global IP allowlist for /api/* (empty = allow all) ──────────────────
+	if len(cfg.Server.AdminAllowlist) > 0 {
+		app.Use("/api", middleware.IPAllowlist(cfg.Server.AdminAllowlist))
+	}
 
 	// ── Auth endpoints — public ─────────────────────────────────────────────
 	authH := &handler.Auth{
@@ -403,7 +428,7 @@ func NewApp(
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
 		},
-	}), middleware.BearerAuth(cfg.Admin.APIKey, auth))
+	}), middleware.BearerAuth(keys, auth))
 
 	api.Get("/auth/me", authH.Me)
 
@@ -415,14 +440,16 @@ func NewApp(
 	api.Put("/users/:id", adminOnly, uh.Update)
 	api.Delete("/users/:id", adminOnly, uh.Delete)
 
-	mh  := &handler.Mounts{Manager: mounts, DJManager: djm}
-	lh  := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
-	plh := &handler.Playlists{Manager: playlists}
-	djh := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
-	sh  := &handler.Settings{Cfg: cfg, ConfigPath: configPath}
-	svh := &handler.Server{ConfigPath: configPath, DataDir: "./data"}
+	mh   := &handler.Mounts{Manager: mounts, DJManager: djm, Webhooks: webhooks}
+	lh   := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
+	plh  := &handler.Playlists{Manager: playlists, Webhooks: webhooks}
+	djh  := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner, Webhooks: webhooks}
+	sh   := &handler.Settings{Cfg: cfg, ConfigPath: configPath}
+	svh  := &handler.Server{ConfigPath: configPath, DataDir: "./data"}
 	whep := &handler.WHEP{Manager: djm.WebRTC}
 	yth  := &handler.YTImport{Manager: ytm}
+	whh  := &handler.Webhooks{Manager: webhooks}
+	sch  := &handler.Schedules{Manager: schedules, Webhooks: webhooks}
 
 	api.Get("/status", handler.Status)
 	api.Get("/settings", adminOnly, sh.Get)
@@ -490,6 +517,24 @@ func NewApp(
 	api.Get("/playlists/:id", plh.Get)
 	api.Put("/playlists/:id", plh.Update)
 	api.Delete("/playlists/:id", plh.Delete)
+
+	api.Get("/webhooks", adminOnly, whh.List)
+	api.Post("/webhooks", adminOnly, whh.Create)
+	api.Get("/webhooks/:id", adminOnly, whh.Get)
+	api.Patch("/webhooks/:id", adminOnly, whh.Update)
+	api.Delete("/webhooks/:id", adminOnly, whh.Delete)
+
+	akh := &handler.APIKeys{Manager: keys}
+	api.Get("/apikeys", adminOnly, akh.List)
+	api.Post("/apikeys", adminOnly, akh.Create)
+	api.Patch("/apikeys/:id", adminOnly, akh.Update)
+	api.Delete("/apikeys/:id", adminOnly, akh.Delete)
+
+	api.Get("/schedules", adminOnly, sch.List)
+	api.Post("/schedules", adminOnly, sch.Create)
+	api.Get("/schedules/:id", adminOnly, sch.Get)
+	api.Patch("/schedules/:id", adminOnly, sch.Update)
+	api.Delete("/schedules/:id", adminOnly, sch.Delete)
 
 	return app
 }

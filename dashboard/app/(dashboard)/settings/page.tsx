@@ -165,6 +165,7 @@ const DEFAULT: APISettings = {
   log_level:            "info",
   log_format:           "text",
   timezone:             "UTC",
+  admin_allowlist:      [],
 }
 
 export default function SettingsPage() {

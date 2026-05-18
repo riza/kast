@@ -6,11 +6,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/riza/kast/internal/api/respond"
 	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/webhook"
 )
 
 // Playlists groups playlist-related handlers.
 type Playlists struct {
-	Manager *playlist.Manager
+	Manager  *playlist.Manager
+	Webhooks *webhook.Manager
 }
 
 // List godoc: GET /api/playlists
@@ -38,6 +40,9 @@ func (h *Playlists) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return respond.Error(c, fiber.StatusBadRequest, err.Error())
 	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("playlist.created", pl)
+	}
 	return respond.Created(c, pl)
 }
 
@@ -55,6 +60,9 @@ func (h *Playlists) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return respond.Error(c, fiber.StatusBadRequest, err.Error())
 	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("playlist.updated", pl)
+	}
 	return respond.OK(c, pl)
 }
 
@@ -63,6 +71,9 @@ func (h *Playlists) Delete(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := h.Manager.Delete(id); errors.Is(err, playlist.ErrNotFound) {
 		return respond.Error(c, fiber.StatusNotFound, "playlist not found")
+	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("playlist.deleted", fiber.Map{"id": id})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }

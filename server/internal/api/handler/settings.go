@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -35,6 +37,7 @@ type SettingsBody struct {
 	LogLevel           string   `json:"log_level"`
 	LogFormat          string   `json:"log_format"`
 	Timezone           string   `json:"timezone"`
+	AdminAllowlist     []string `json:"admin_allowlist"`
 }
 
 func (h *Settings) toBody() SettingsBody {
@@ -53,6 +56,7 @@ func (h *Settings) toBody() SettingsBody {
 		LogLevel:           h.Cfg.Log.Level,
 		LogFormat:          h.Cfg.Log.Format,
 		Timezone:           h.Cfg.Server.Timezone,
+		AdminAllowlist:     h.Cfg.Server.AdminAllowlist,
 	}
 }
 
@@ -117,6 +121,24 @@ func (h *Settings) Update(c *fiber.Ctx) error {
 	h.Cfg.HLS.PlaylistSize = body.HLSPlaylistSize
 	h.Cfg.Log.Level = body.LogLevel
 	h.Cfg.Log.Format = body.LogFormat
+	if body.AdminAllowlist != nil {
+		for _, cidr := range body.AdminAllowlist {
+			entry := cidr
+			if !strings.Contains(entry, "/") {
+				if ip := net.ParseIP(entry); ip != nil {
+					if ip.To4() != nil {
+						entry = entry + "/32"
+					} else {
+						entry = entry + "/128"
+					}
+				}
+			}
+			if _, _, err := net.ParseCIDR(entry); err != nil {
+				return respond.Error(c, fiber.StatusBadRequest, fmt.Sprintf("invalid IP/CIDR in admin_allowlist: %q", cidr))
+			}
+		}
+		h.Cfg.Server.AdminAllowlist = body.AdminAllowlist
+	}
 
 	f, err := os.Create(h.ConfigPath)
 	if err != nil {

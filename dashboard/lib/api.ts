@@ -262,6 +262,33 @@ export type APISettings = {
   log_level:            "debug" | "info" | "warn" | "error"
   log_format:           "text" | "json"
   timezone:             string
+  admin_allowlist:      string[]
+}
+
+export type APIKey = {
+  id:           string
+  name:         string
+  prefix:       string
+  created_at:   string
+  last_used_at: string | null
+  expires_at:   string | null
+  enabled:      boolean
+  ip_allowlist: string[]
+}
+
+export type CreateAPIKeyResponse = APIKey & { key: string }
+
+export type CreateAPIKeyBody = {
+  name:          string
+  expires_at?:   string
+  ip_allowlist?: string[]
+}
+
+export type UpdateAPIKeyBody = {
+  name?:         string
+  enabled?:      boolean
+  ip_allowlist?: string[]
+  expires_at?:   string | null
 }
 
 export type APIListener = {
@@ -270,6 +297,61 @@ export type APIListener = {
   last_seen:    string
   country_code: string
   user_agent:   string
+}
+
+export type APIWebhook = {
+  id:         string
+  url:        string
+  events:     string[]  // empty = all events
+  secret?:    string
+  enabled:    boolean
+  created_at: string
+}
+
+export type CreateWebhookBody = {
+  url:      string
+  events:   string[]
+  secret?:  string
+  enabled?: boolean
+}
+
+export type UpdateWebhookBody = {
+  url?:     string
+  events?:  string[]
+  secret?:  string
+  enabled?: boolean
+}
+
+export type APISchedule = {
+  id:            string
+  name:          string
+  mount:         string
+  playlist_id:   string
+  days_mask:     number  // bit 0 = Sun … bit 6 = Sat
+  start_minutes: number  // minutes since midnight in server timezone
+  end_minutes:   number
+  enabled:       boolean
+  created_at:    string
+}
+
+export type CreateScheduleBody = {
+  name:          string
+  mount:         string
+  playlist_id:   string
+  days_mask:     number
+  start_minutes: number
+  end_minutes:   number
+  enabled?:      boolean
+}
+
+export type UpdateScheduleBody = {
+  name?:          string
+  mount?:         string
+  playlist_id?:   string
+  days_mask?:     number
+  start_minutes?: number
+  end_minutes?:   number
+  enabled?:       boolean
 }
 
 export const api = {
@@ -504,5 +586,80 @@ export const api = {
     /** DELETE /api/playlists/{id} */
     delete: (id: string) =>
       apiFetch<void>(`/api/playlists/${id}`, { method: "DELETE" }),
+  },
+
+  webhooks: {
+    /** GET /api/webhooks */
+    list: () => apiFetch<APIWebhook[]>("/api/webhooks"),
+
+    /** GET /api/webhooks/{id} */
+    get: (id: string) => apiFetch<APIWebhook>(`/api/webhooks/${id}`),
+
+    /** POST /api/webhooks */
+    create: (body: CreateWebhookBody) =>
+      apiFetch<APIWebhook>("/api/webhooks", {
+        method: "POST",
+        body:   JSON.stringify(body),
+      }),
+
+    /** PATCH /api/webhooks/{id} */
+    update: (id: string, body: UpdateWebhookBody) =>
+      apiFetch<APIWebhook>(`/api/webhooks/${id}`, {
+        method: "PATCH",
+        body:   JSON.stringify(body),
+      }),
+
+    /** DELETE /api/webhooks/{id} */
+    delete: (id: string) =>
+      apiFetch<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
+  },
+
+  schedules: {
+    /** GET /api/schedules */
+    list: () => apiFetch<APISchedule[]>("/api/schedules"),
+
+    /** GET /api/schedules/{id} */
+    get: (id: string) => apiFetch<APISchedule>(`/api/schedules/${id}`),
+
+    /** POST /api/schedules */
+    create: (body: CreateScheduleBody) =>
+      apiFetch<APISchedule>("/api/schedules", {
+        method: "POST",
+        body:   JSON.stringify(body),
+      }),
+
+    /** PATCH /api/schedules/{id} */
+    update: (id: string, body: UpdateScheduleBody) =>
+      apiFetch<APISchedule>(`/api/schedules/${id}`, {
+        method: "PATCH",
+        body:   JSON.stringify(body),
+      }),
+
+    /** DELETE /api/schedules/{id} */
+    delete: (id: string) =>
+      apiFetch<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+  },
+
+  apikeys: {
+    /** GET /api/apikeys */
+    list: () => apiFetch<APIKey[]>("/api/apikeys"),
+
+    /** POST /api/apikeys — returns plaintext key once */
+    create: (body: CreateAPIKeyBody) =>
+      apiFetch<CreateAPIKeyResponse>("/api/apikeys", {
+        method: "POST",
+        body:   JSON.stringify(body),
+      }),
+
+    /** PATCH /api/apikeys/{id} */
+    update: (id: string, body: UpdateAPIKeyBody) =>
+      apiFetch<APIKey>(`/api/apikeys/${id}`, {
+        method: "PATCH",
+        body:   JSON.stringify(body),
+      }),
+
+    /** DELETE /api/apikeys/{id} */
+    delete: (id: string) =>
+      apiFetch<void>(`/api/apikeys/${id}`, { method: "DELETE" }),
   },
 }

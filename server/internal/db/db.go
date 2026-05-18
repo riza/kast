@@ -100,6 +100,36 @@ func migrate(db *sql.DB) error {
 			album  TEXT NOT NULL DEFAULT '',
 			genre  TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS webhooks (
+			id         TEXT PRIMARY KEY,
+			url        TEXT NOT NULL,
+			events     TEXT NOT NULL DEFAULT '[]',
+			secret     TEXT NOT NULL DEFAULT '',
+			enabled    INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id           TEXT PRIMARY KEY,
+			name         TEXT NOT NULL,
+			key_hash     TEXT NOT NULL,
+			prefix       TEXT NOT NULL,
+			created_at   TEXT NOT NULL,
+			last_used_at TEXT,
+			expires_at   TEXT,
+			enabled      INTEGER NOT NULL DEFAULT 1,
+			ip_allowlist TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedules (
+			id            TEXT PRIMARY KEY,
+			name          TEXT NOT NULL,
+			mount         TEXT NOT NULL,
+			playlist_id   TEXT NOT NULL,
+			days_mask     INTEGER NOT NULL,
+			start_minutes INTEGER NOT NULL,
+			end_minutes   INTEGER NOT NULL,
+			enabled       INTEGER NOT NULL DEFAULT 1,
+			created_at    TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

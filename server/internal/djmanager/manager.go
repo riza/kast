@@ -19,6 +19,7 @@ import (
 	"github.com/riza/kast/internal/mount"
 	"github.com/riza/kast/internal/playlist"
 	"github.com/riza/kast/internal/webrtcmanager"
+	"github.com/riza/kast/internal/webhook"
 )
 
 // session holds all resources for one active AutoDJ mount.
@@ -55,12 +56,13 @@ type Manager struct {
 	db        *sql.DB
 	playlists *playlist.Manager
 	scanner   *library.Scanner
+	webhooks  *webhook.Manager
 	Trackers  *hls.TrackerRegistry
 	WebRTC    *webrtcmanager.Manager
 }
 
 // NewManager returns a Manager wired to the given segmenter, mount manager, db, playlists, and scanner.
-func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, playlists *playlist.Manager, scanner *library.Scanner, webrtcCfg webrtcmanager.Config) *Manager {
+func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, playlists *playlist.Manager, scanner *library.Scanner, webrtcCfg webrtcmanager.Config, webhooks *webhook.Manager) *Manager {
 	return &Manager{
 		sessions:  make(map[string]*session),
 		history:   make(map[string][]*library.Track),
@@ -70,6 +72,7 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, pla
 		db:        db,
 		playlists: playlists,
 		scanner:   scanner,
+		webhooks:  webhooks,
 		WebRTC:    webrtcmanager.New(webrtcCfg),
 	}
 }
@@ -158,6 +161,16 @@ func (m *Manager) Start(
 		if onTrackChange != nil {
 			onTrackChange(t.Path)
 		}
+		if m.webhooks != nil {
+			m.webhooks.Emit("autodj.track.changed", map[string]any{
+				"mount":       mountName,
+				"id":          t.ID,
+				"title":       t.Title,
+				"artist":      t.Artist,
+				"album":       t.Album,
+				"duration_ms": t.DurationMs,
+			})
+		}
 	}
 
 	// Start the AutoDJ player in a background goroutine.
@@ -175,6 +188,9 @@ func (m *Manager) Start(
 	}
 	m.sessions[mountName] = sess
 	m.mounts.SetStatus(mountName, mount.StatusLive)
+	if m.webhooks != nil {
+		m.webhooks.Emit("mount.status.changed", map[string]any{"mount": mountName, "status": "live"})
+	}
 
 	// Background: wait for ffmpeg to exit and clean up.
 	go func() {
@@ -184,9 +200,15 @@ func (m *Manager) Start(
 				slog.Error("djmanager: hls ffmpeg crashed",
 					"mount", mountName, "err", err)
 				m.mounts.SetStatus(mountName, mount.StatusError)
+				if m.webhooks != nil {
+					m.webhooks.Emit("mount.status.changed", map[string]any{"mount": mountName, "status": "error"})
+				}
 			}
 		} else {
 			m.mounts.SetStatus(mountName, mount.StatusIdle)
+			if m.webhooks != nil {
+				m.webhooks.Emit("mount.status.changed", map[string]any{"mount": mountName, "status": "idle"})
+			}
 		}
 		m.mu.Lock()
 		// Only remove if this is still our session (a new Start may have replaced it).
@@ -216,6 +238,9 @@ func (m *Manager) Stop(mountName string) error {
 	m.Trackers.Stop(m.segmenter.MountDir(mountName))
 	m.WebRTC.StopMount(mountName)
 	m.mounts.SetStatus(mountName, mount.StatusIdle)
+	if m.webhooks != nil {
+		m.webhooks.Emit("mount.status.changed", map[string]any{"mount": mountName, "status": "idle"})
+	}
 	go m.saveState()
 	slog.Info("djmanager: stopped", "mount", mountName)
 	return nil

@@ -28,6 +28,7 @@ func TestOpen_AllTablesCreated(t *testing.T) {
 		"tracks",
 		"autodj_sessions",
 		"track_overrides",
+		"webhooks",
 	} {
 		var name string
 		err := d.QueryRow(

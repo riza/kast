@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -66,12 +67,12 @@ func (h *Auth) Logout(c *fiber.Ctx) error {
 
 func (h *Auth) Me(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*authmanager.Claims)
-	// API key access has no real user row
-	if claims.UserID == "api-key" {
+	// API key access (static "api-key" or dynamic "api:<id>") has no user row.
+	if claims.UserID == "api-key" || strings.HasPrefix(claims.UserID, "api:") {
 		return respond.OK(c, fiber.Map{
-			"id":       "api-key",
-			"username": "api-key",
-			"role":     "admin",
+			"id":       claims.UserID,
+			"username": claims.Username,
+			"role":     string(claims.Role),
 		})
 	}
 	user, err := h.Manager.GetUser(claims.UserID)

@@ -16,15 +16,19 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/riza/kast/internal/api"
+	"github.com/riza/kast/internal/apikey"
 	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/config"
 	"github.com/riza/kast/internal/db"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
+	"github.com/riza/kast/internal/livesource"
 	"github.com/riza/kast/internal/mount"
 	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/schedule"
 	"github.com/riza/kast/internal/source"
+	"github.com/riza/kast/internal/webhook"
 	"github.com/riza/kast/internal/webrtcmanager"
 	"github.com/riza/kast/internal/ytimport"
 )
@@ -101,11 +105,16 @@ func run() error {
 		return fmt.Errorf("playlist manager: %w", err)
 	}
 
+	webhooks, err := webhook.NewManager(database)
+	if err != nil {
+		return fmt.Errorf("webhook manager: %w", err)
+	}
+
 	djm := djmanager.NewManager(segmenter, mounts, database, playlists, scanner, webrtcmanager.Config{
 		NATIPs:     cfg.WebRTC.NATIPs,
 		UDPPortMin: cfg.WebRTC.UDPPortMin,
 		UDPPortMax: cfg.WebRTC.UDPPortMax,
-	})
+	}, webhooks)
 
 	importDir := "./data/music"
 	if len(cfg.Library.ScanDirs) > 0 {
@@ -113,10 +122,28 @@ func run() error {
 	}
 	ytm := ytimport.NewManager(importDir, scanner)
 
-	// ── Fiber app ────────────────────────────────────────────────────────────
-	app := api.NewApp(cfg, *cfgPath, auth, mounts, scanner, segmenter, src, playlists, djm, ytm)
+	lsm := livesource.NewManager(segmenter, mounts, src, webhooks)
 
-	// ── Initial library scan + AutoDJ restore (background) ───────────────────
+	schedules, err := schedule.NewManager(database, mounts, playlists)
+	if err != nil {
+		return fmt.Errorf("schedule manager: %w", err)
+	}
+	scheduleRunner := schedule.NewRunner(schedules, djm, playlists, scanner, webhooks, cfg.Server.Timezone)
+
+	keys, err := apikey.NewManager(database)
+	if err != nil {
+		return fmt.Errorf("apikey manager: %w", err)
+	}
+
+	// ── Fiber app ────────────────────────────────────────────────────────────
+	app := api.NewApp(cfg, *cfgPath, auth, mounts, scanner, segmenter, src, playlists, djm, ytm, webhooks, lsm, schedules, keys)
+
+	// rootCtx scopes long-lived background tasks (scheduler runner) so they
+	// stop cleanly before djm.StopAll() runs.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
+	// ── Initial library scan + AutoDJ restore + scheduler (background) ───────
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -126,6 +153,10 @@ func run() error {
 		// Restore AutoDJ sessions that were active before the last shutdown.
 		// Runs after the scan so that track data is available.
 		djm.Restore(context.Background())
+		// Start the schedule runner only after Restore so the first tick sees
+		// the real session state and can adopt existing sessions rather than
+		// fighting them.
+		go scheduleRunner.Run(rootCtx)
 	}()
 
 	// ── Start servers ────────────────────────────────────────────────────────
@@ -162,7 +193,11 @@ func run() error {
 	if err := app.ShutdownWithTimeout(30 * time.Second); err != nil {
 		slog.Error("shutdown error", "err", err)
 	}
+	// Stop scheduler before djm so it doesn't try to start a session against
+	// a tearing-down segmenter.
+	rootCancel()
 	djm.StopAll()
+	lsm.StopAll()
 	slog.Info("kast stopped")
 	return nil
 }

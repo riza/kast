@@ -31,8 +31,9 @@ type ServerConfig struct {
 	// TrustProxy enables reading the real client IP from the X-Forwarded-For
 	// header. Set to true when running behind a reverse proxy (nginx, Caddy,
 	// Traefik). Leave false for direct (non-proxied) deployments.
-	TrustProxy bool   `toml:"trust_proxy"`
-	Timezone   string `toml:"timezone"`
+	TrustProxy    bool     `toml:"trust_proxy"`
+	Timezone      string   `toml:"timezone"`
+	AdminAllowlist []string `toml:"admin_allowlist"`
 }
 
 type AdminConfig struct {
@@ -102,11 +103,8 @@ func Load(path string) (*Config, error) {
 func (c *Config) validate() error {
 	var errs []string
 
-	if c.Admin.APIKey == "" {
-		errs = append(errs, "admin.api_key must not be empty")
-	}
-	if c.Admin.APIKey == "CHANGE_ME_BEFORE_PRODUCTION" {
-		fmt.Fprintln(os.Stderr, "WARNING: using default admin.api_key — change before deploying to production")
+	if c.Admin.APIKey != "" {
+		fmt.Fprintln(os.Stderr, "WARNING: admin.api_key in kast.toml is no longer used — migrate to dynamic API keys via the dashboard")
 	}
 	if c.Admin.JWTSecret == "" {
 		errs = append(errs, "admin.jwt_secret must not be empty")

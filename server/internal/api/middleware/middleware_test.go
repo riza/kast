@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/riza/kast/internal/api/middleware"
+	"github.com/riza/kast/internal/apikey"
 	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/db"
 	"github.com/stretchr/testify/assert"
@@ -34,13 +35,13 @@ func testAuth(t *testing.T) (*authmanager.Manager, string) {
 	return m, token
 }
 
-const testAPIKey = "test-api-key-1234"
-
 func bearerApp(t *testing.T) (*fiber.App, *authmanager.Manager, string) {
 	t.Helper()
 	auth, token := testAuth(t)
+	keys, err := apikey.NewManager(testDB(t))
+	require.NoError(t, err)
 	app := fiber.New()
-	app.Use(middleware.BearerAuth(testAPIKey, auth))
+	app.Use(middleware.BearerAuth(keys, auth))
 	app.Get("/", func(c *fiber.Ctx) error {
 		claims := c.Locals("user").(*authmanager.Claims)
 		return c.SendString(claims.Username)
@@ -65,9 +66,19 @@ func TestBearerAuth_JWTBearer(t *testing.T) {
 }
 
 func TestBearerAuth_APIKey(t *testing.T) {
-	app, _, _ := bearerApp(t)
+	auth, _ := testAuth(t)
+	keys, err := apikey.NewManager(testDB(t))
+	require.NoError(t, err)
+	cr, err := keys.Create(apikey.CreateRequest{Name: "test"})
+	require.NoError(t, err)
+	app := fiber.New()
+	app.Use(middleware.BearerAuth(keys, auth))
+	app.Get("/", func(c *fiber.Ctx) error {
+		claims := c.Locals("user").(*authmanager.Claims)
+		return c.SendString(claims.Username)
+	})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Authorization", "Bearer "+cr.Key)
 	assert.Equal(t, http.StatusOK, do(t, app, req).StatusCode)
 }
 
@@ -108,15 +119,19 @@ func TestBearerAuth_WWWAuthenticateHeader(t *testing.T) {
 
 func TestBearerAuth_APIKey_HasAdminRole(t *testing.T) {
 	auth, _ := testAuth(t)
+	keys, err := apikey.NewManager(testDB(t))
+	require.NoError(t, err)
+	cr, err := keys.Create(apikey.CreateRequest{Name: "admin-key"})
+	require.NoError(t, err)
 	app := fiber.New()
-	app.Use(middleware.BearerAuth(testAPIKey, auth))
+	app.Use(middleware.BearerAuth(keys, auth))
 	app.Get("/", func(c *fiber.Ctx) error {
 		claims := c.Locals("user").(*authmanager.Claims)
 		return c.SendString(string(claims.Role))
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Authorization", "Bearer "+cr.Key)
 	resp := do(t, app, req)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
@@ -136,7 +151,7 @@ func TestBearerAuth_CookieTakesPrecedence(t *testing.T) {
 func TestRequireRole_Allowed(t *testing.T) {
 	auth, token := testAuth(t)
 	app := fiber.New()
-	app.Use(middleware.BearerAuth(testAPIKey, auth))
+	app.Use(middleware.BearerAuth(nil, auth))
 	app.Use(middleware.RequireRole(authmanager.RoleAdmin, authmanager.RoleOperator))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
@@ -152,7 +167,7 @@ func TestRequireRole_Forbidden(t *testing.T) {
 	token, _, _ := m.Login("viewer", "password123")
 
 	app := fiber.New()
-	app.Use(middleware.BearerAuth(testAPIKey, m))
+	app.Use(middleware.BearerAuth(nil, m))
 	app.Use(middleware.RequireRole(authmanager.RoleAdmin))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
@@ -170,7 +185,7 @@ func TestRequireRole_MultipleAllowed(t *testing.T) {
 	opToken, _, _ := m.Login("op", "password456")
 
 	app := fiber.New()
-	app.Use(middleware.BearerAuth(testAPIKey, m))
+	app.Use(middleware.BearerAuth(nil, m))
 	app.Use(middleware.RequireRole(authmanager.RoleAdmin, authmanager.RoleOperator))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 

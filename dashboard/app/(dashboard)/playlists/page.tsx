@@ -307,7 +307,7 @@ function PlaylistDetail({ playlist, library, onChange, onDelete }: {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button onClick={() => setAddOpen(true)}
-              className="h-8 px-3 border border-ink-800 hover:bg-ink-800 text-[12.5px] text-ink-200 inline-flex items-center gap-1.5 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium bg-k-500 text-white hover:bg-k-600 transition-colors">
               <Plus className="h-3 w-3" /> Add tracks
             </button>
             <AlertDialog>
@@ -339,7 +339,7 @@ function PlaylistDetail({ playlist, library, onChange, onDelete }: {
             <ListMusic className="h-10 w-10 opacity-20" />
             <p className="text-[12.5px]">Playlist is empty</p>
             <button onClick={() => setAddOpen(true)}
-              className="h-8 px-3 border border-ink-800 hover:bg-ink-800 text-[12px] text-ink-200 inline-flex items-center gap-1.5 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium bg-k-500 text-white hover:bg-k-600 transition-colors">
               <Plus className="h-3 w-3" /> Add tracks
             </button>
           </div>

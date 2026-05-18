@@ -11,6 +11,7 @@ import (
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/library"
 	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/webhook"
 )
 
 // AutoDJ groups handlers for per-mount AutoDJ control.
@@ -18,6 +19,7 @@ type AutoDJ struct {
 	DJManager *djmanager.Manager
 	Playlists *playlist.Manager
 	Scanner   *library.Scanner
+	Webhooks  *webhook.Manager
 }
 
 type startAutoDJRequest struct {
@@ -85,7 +87,13 @@ func (h *AutoDJ) Start(c *fiber.Ctx) error {
 	if err := h.DJManager.Start(context.Background(), mountName, req.PlaylistID, startFrom, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
 		return respond.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
-
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("autodj.started", fiber.Map{
+			"mount":       mountName,
+			"playlist_id": req.PlaylistID,
+			"mode":        string(mode),
+		})
+	}
 	return respond.OK(c, fiber.Map{
 		"status":    "started",
 		"mount":     mountName,
@@ -101,6 +109,9 @@ func (h *AutoDJ) Skip(c *fiber.Ctx) error {
 	if err := h.DJManager.Skip(mountName); err != nil {
 		return respond.Error(c, fiber.StatusNotFound, err.Error())
 	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("autodj.track.skipped", fiber.Map{"mount": mountName})
+	}
 	return respond.OK(c, fiber.Map{"status": "skipped"})
 }
 
@@ -109,6 +120,9 @@ func (h *AutoDJ) Stop(c *fiber.Ctx) error {
 	mountName := "/" + c.Params("name")
 	if err := h.DJManager.Stop(mountName); err != nil {
 		return respond.Error(c, fiber.StatusNotFound, err.Error())
+	}
+	if h.Webhooks != nil {
+		h.Webhooks.Emit("autodj.stopped", fiber.Map{"mount": mountName})
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }

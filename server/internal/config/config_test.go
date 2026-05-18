@@ -61,15 +61,14 @@ func TestLoad_InvalidTOML(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestValidate_MissingAPIKey(t *testing.T) {
+func TestValidate_MissingJWTSecretOnly(t *testing.T) {
 	_, err := config.Load(writeTOML(t, `
 [server]
 public_url = "http://localhost"
 [admin]
-jwt_secret = "secret"
 `))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "api_key")
+	assert.Contains(t, err.Error(), "jwt_secret")
 }
 
 func TestValidate_MissingJWTSecret(t *testing.T) {
@@ -234,7 +233,6 @@ public_url = ""
 `))
 	require.Error(t, err)
 	// Should report all missing fields, not just the first.
-	assert.Contains(t, err.Error(), "api_key")
 	assert.Contains(t, err.Error(), "jwt_secret")
 	assert.Contains(t, err.Error(), "public_url")
 }

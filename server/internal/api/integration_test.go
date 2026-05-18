@@ -13,14 +13,17 @@ import (
 	"testing"
 
 	"github.com/riza/kast/internal/api"
+	"github.com/riza/kast/internal/apikey"
 	"github.com/riza/kast/internal/authmanager"
 	"github.com/riza/kast/internal/config"
 	"github.com/riza/kast/internal/db"
 	"github.com/riza/kast/internal/djmanager"
 	"github.com/riza/kast/internal/hls"
 	"github.com/riza/kast/internal/library"
+	"github.com/riza/kast/internal/livesource"
 	"github.com/riza/kast/internal/mount"
 	"github.com/riza/kast/internal/playlist"
+	"github.com/riza/kast/internal/schedule"
 	"github.com/riza/kast/internal/source"
 	"github.com/riza/kast/internal/webrtcmanager"
 	"github.com/riza/kast/internal/ytimport"
@@ -29,14 +32,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testAPIKey = "test-api-key-supersecret"
-
 // testEnv bundles the Fiber app with its components for convenient test access.
 type testEnv struct {
 	app      *fiber.App
 	auth     *authmanager.Manager
 	mounts   *mount.Manager
 	playlists *playlist.Manager
+	keys     *apikey.Manager
+	adminJWT string // JWT for the test admin created in buildTestEnv
 }
 
 // buildTestEnv wires all components together and returns a ready-to-test env.
@@ -64,7 +67,7 @@ func buildTestEnv(t *testing.T) *testEnv {
 	require.NoError(t, err)
 
 	src := source.NewHandler()
-	djm := djmanager.NewManager(segmenter, mounts, d, pls, scanner, webrtcmanager.Config{})
+	djm := djmanager.NewManager(segmenter, mounts, d, pls, scanner, webrtcmanager.Config{}, nil)
 	ytm := ytimport.NewManager(scanDir, scanner)
 
 	cfg := &config.Config{
@@ -73,7 +76,6 @@ func buildTestEnv(t *testing.T) *testEnv {
 			PublicURL: "http://localhost:8080",
 		},
 		Admin: config.AdminConfig{
-			APIKey:    testAPIKey,
 			JWTSecret: "test-jwt-secret",
 		},
 		HLS: config.HLSConfig{
@@ -83,10 +85,15 @@ func buildTestEnv(t *testing.T) *testEnv {
 		},
 	}
 
-	app := api.NewApp(cfg, "", auth, mounts, scanner, segmenter, src, pls, djm, ytm)
+	lsm := livesource.NewManager(segmenter, mounts, src, nil)
+	schedules, err := schedule.NewManager(d, mounts, pls)
+	require.NoError(t, err)
+	keys, err := apikey.NewManager(d)
+	require.NoError(t, err)
+	app := api.NewApp(cfg, "", auth, mounts, scanner, segmenter, src, pls, djm, ytm, nil, lsm, schedules, keys)
 	t.Cleanup(func() { app.Shutdown() }) //nolint:errcheck
 
-	return &testEnv{app: app, auth: auth, mounts: mounts, playlists: pls}
+	return &testEnv{app: app, auth: auth, mounts: mounts, playlists: pls, keys: keys}
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -103,9 +110,19 @@ func (e *testEnv) do(t *testing.T, method, path string, body io.Reader, headers 
 	return resp
 }
 
-// authHeaders returns headers containing the static API key.
+// authHeaders returns headers containing a valid admin JWT.
+// The admin user is created on first call (lazy init).
 func (e *testEnv) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + testAPIKey}
+	if e.adminJWT == "" {
+		token, _, err := e.auth.Setup("admin", "password123")
+		if err != nil {
+			token, _, err = e.auth.Login("admin", "password123")
+		}
+		if err == nil {
+			e.adminJWT = token
+		}
+	}
+	return map[string]string{"Authorization": "Bearer " + e.adminJWT}
 }
 
 // jwtHeaders returns headers containing a JWT for the given user token.
@@ -127,11 +144,15 @@ func jsonBody(v any) *bytes.Buffer {
 	return bytes.NewBuffer(b)
 }
 
-// setupAdmin creates the first admin account and returns a JWT for it.
+// setupAdmin creates (or reuses) the admin and returns the JWT.
 func (e *testEnv) setupAdmin(t *testing.T) string {
 	t.Helper()
 	token, _, err := e.auth.Setup("admin", "password123")
+	if err != nil {
+		token, _, err = e.auth.Login("admin", "password123")
+	}
 	require.NoError(t, err)
+	e.adminJWT = token
 	return token
 }
 
@@ -231,10 +252,14 @@ func TestAPI_Logout(t *testing.T) {
 
 func TestAPI_Me_APIKey(t *testing.T) {
 	env := buildTestEnv(t)
-	resp := env.do(t, "GET", "/api/auth/me", nil, env.authHeaders())
+	cr, err := env.keys.Create(apikey.CreateRequest{Name: "test-key"})
+	require.NoError(t, err)
+	resp := env.do(t, "GET", "/api/auth/me", nil, map[string]string{
+		"Authorization": "Bearer " + cr.Key,
+	})
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	body := readJSON(t, resp.Body)
-	assert.Equal(t, "api-key", body["username"])
+	assert.Equal(t, "api-key:test-key", body["username"])
 }
 
 func TestAPI_Me_JWT(t *testing.T) {
