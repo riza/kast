@@ -4,22 +4,22 @@
 [server]
 # Address for the main HTTP server (listeners + API)
 http_addr  = ":8080"
-# Set to a valid cert/key path to enable HTTPS. Leave empty to disable.
-tls_addr   = ""
-tls_cert   = ""
-tls_key    = ""
 # Publicly reachable base URL (used in generated m3u8 URLs)
 public_url = "http://localhost:8080"
 # Origins allowed for CORS. Dashboard dev server should be listed here.
 # Empty list blocks all cross-origin requests.
 cors_origins = ["http://localhost:3000"]
+# Set to true when running behind Cloudflare or any reverse proxy.
+# Enables reading the real client IP from X-Forwarded-For.
+trust_proxy = false
 
 [admin]
-# API key required for all /api/* requests.
+# API key required for all /api/* requests (legacy / service access).
 # Generate with: openssl rand -hex 32
-api_key    = "CHANGE_ME_BEFORE_PRODUCTION"
-# Secret used to sign JWT tokens. Generate with: openssl rand -hex 32
-jwt_secret = ""
+api_key = "CHANGE_ME_BEFORE_PRODUCTION"
+
+# Secret used to sign JWTs. Generate with: openssl rand -hex 32
+jwt_secret = "CHANGE_ME_BEFORE_PRODUCTION"
 
 [hls]
 # Length of each HLS segment in seconds (4-10 recommended)
@@ -40,6 +40,21 @@ audio_extensions = [".mp3", ".flac", ".aac", ".ogg", ".wav", ".opus", ".m4a"]
 default_mode = "sequential"
 # Crossfade duration between tracks in milliseconds (0 = disabled)
 crossfade_ms = 2000
+
+[ssl]
+# Enable HTTPS. When enabled, HTTP on http_addr becomes a redirect to HTTPS.
+enabled = false
+# Use Let's Encrypt automatic certificates (requires valid domain + port 443).
+auto_cert = false
+# Domains for auto-cert (Let's Encrypt). Required if auto_cert = true.
+domains = []
+# Manual TLS: paths to cert and key files. Required if enabled=true and auto_cert=false.
+cert_file = ""
+key_file  = ""
+# Directory to cache Let's Encrypt certificates.
+cert_dir  = "./data/certs"
+# Address for the HTTPS listener (default :443).
+http_addr = ":443"
 
 [log]
 # debug | info | warn | error

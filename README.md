@@ -1,6 +1,6 @@
 # Kast
 
-A lightweight, self-hosted internet radio streaming server. Drop in your audio files, create playlists, and broadcast HLS streams — no complex setup required.
+A lightweight, self-hosted internet radio streaming server. Drop in audio files, create playlists, and broadcast HLS streams — no complex setup required.
 
 <!-- TODO: Uncomment when public repo is ready
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
@@ -12,42 +12,45 @@ A lightweight, self-hosted internet radio streaming server. Drop in your audio f
 ## Features
 
 - **HLS Streaming** — Serve audio as HTTP Live Streaming, playable in any modern browser or media player
-- **AutoDJ** — Automatic playback with sequential or shuffle modes; skip tracks, manage queues
-- **Media Library** — Scan directories for audio files, upload via browser with drag-and-drop, import from YouTube
-- **Playlists** — Create and manage playlists, assign them to mounts for continuous playback
-- **Live Source Input** — Icecast-compatible `PUT /source/{mount}` endpoint for OBS, BUTT, Liquidsoap, etc.
-- **Public Player** — Embeddable web player with now-playing info, history, and customizable themes
+- **AutoDJ** — Automatic playback with sequential or shuffle modes, crossfade, skip and queue management
+- **Media Library** — Scan directories for audio files, upload via browser, import from YouTube
+- **Playlists** — Create and manage playlists; assign them to mounts for continuous playback
+- **Live Source Input** — Icecast-compatible `PUT /source/{mount}` for OBS, BUTT, Liquidsoap, and similar tools
+- **Public Player** — Embeddable web player with now-playing info and track history
 - **Dashboard** — Modern admin UI built with Next.js, shadcn/ui, and Tailwind CSS
-- **SSL / Custom Domain** — Built-in Let's Encrypt auto-cert or manual TLS; point your domain and go
+- **SSL / Custom Domain** — Built-in Let's Encrypt auto-cert, manual TLS, or pair with Cloudflare
 - **Docker Ready** — Single `docker compose up` to run the full stack
-- **Minimal Dependencies** — Go binary + ffmpeg; no database required (file-based state)
+- **Minimal Dependencies** — Go binary + ffmpeg; SQLite for state
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                     Clients                          │
-│  (Browsers, VLC, mobile apps, embedded players)     │
-└──────────────┬──────────────────────┬───────────────┘
-               │ HLS (.m3u8/.ts)      │ REST API
-               ▼                      ▼
-┌─────────────────────────────────────────────────────┐
-│                  Kast Server (Go)                    │
-│                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │  Router  │  │ HLS Seg- │  │   AutoDJ Player  │  │
-│  │ (Fiber)  │  │  menter  │  │  (ffmpeg pipes)  │  │
-│  └──────────┘  └──────────┘  └──────────────────┘  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │  Mount   │  │ Library  │  │ Source Handler   │  │
-│  │ Manager  │  │ Scanner  │  │ (Icecast compat) │  │
-│  └──────────┘  └──────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────────────┐
-│  File System: /data/music, /data/hls, /data/mounts  │
-└─────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph clients["Clients"]
+        BR["Browser / Mobile"]
+        VLC["Media Player"]
+        PL["Public Player"]
+    end
+
+    subgraph sources["Live Sources"]
+        OBS["OBS / BUTT / Liquidsoap"]
+    end
+
+    subgraph stack["Kast Stack"]
+        DASH["Dashboard<br/>Next.js :3000"]
+        SRV["Kast Server<br/>Go :8080 / :443"]
+        DB[("SQLite")]
+        FS[("File System<br/>/data/music · /data/hls")]
+    end
+
+    BR -- "HLS .m3u8 / .ts" --> SRV
+    VLC -- "HLS .m3u8 / .ts" --> SRV
+    PL -- "Public API" --> SRV
+    BR -- "Admin UI" --> DASH
+    DASH -- "API proxy<br/>/api/* /hls/*" --> SRV
+    OBS -- "PUT /source/{mount}<br/>Icecast-compat" --> SRV
+    SRV --- DB
+    SRV --- FS
 ```
 
 ## Quick Start
@@ -57,16 +60,16 @@ A lightweight, self-hosted internet radio streaming server. Drop in your audio f
 ```bash
 git clone https://github.com/riza/kast.git
 cd kast
-
-# Copy and edit the config
-cp server/kast.toml server/kast.toml
-# Edit server/kast.toml — at minimum, change the api_key
-
-# Start everything
 docker compose up -d
 ```
 
-The dashboard will be available at `http://localhost:3000` and the streaming server at `http://localhost:8080`.
+The dashboard is available at `http://localhost:3000`. On first run a random API key is auto-generated and printed to the server log:
+
+```bash
+docker compose logs server | grep "Generated API key"
+```
+
+Enter that key in **Dashboard → Settings → Connection**.
 
 ### Manual Setup
 
@@ -78,7 +81,7 @@ cd server
 go build -o kast ./cmd/kast
 ./kast -config kast.toml
 
-# Dashboard
+# Dashboard (separate terminal)
 cd dashboard
 npm install
 npm run dev
@@ -88,30 +91,121 @@ npm run dev
 
 1. Place audio files in `server/data/music/` (or upload via the dashboard)
 2. Open the dashboard at `http://localhost:3000`
-3. Create a mount point (e.g. `/radio`)
+3. Create a mount point (e.g. `radio`)
 4. Create a playlist and add tracks
-5. Start the AutoDJ on your mount
+5. Start AutoDJ on your mount
 6. Listen at `http://localhost:8080/player/radio`
 
 ## Configuration
 
-Kast is configured via a single TOML file. See [`server/kast.toml`](server/kast.toml) for the full reference.
+Kast is configured via a single TOML file (`server/kast.toml`). The Docker entrypoint auto-generates it on first run from the bundled example. All keys can be overridden via environment variables — see [`.env.example`](.env.example).
 
 | Section | Key Options |
 |---------|-------------|
-| `[server]` | `http_addr`, `public_url`, `cors_origins` |
-| `[admin]` | `api_key` — required for all API requests |
+| `[server]` | `http_addr`, `public_url`, `cors_origins`, `trust_proxy` |
+| `[admin]` | `api_key`, `jwt_secret` |
 | `[hls]` | `segment_duration`, `playlist_size`, `output_dir` |
 | `[library]` | `scan_dirs`, `audio_extensions` |
 | `[autodj]` | `default_mode` (sequential/shuffle), `crossfade_ms` |
-| `[ssl]` | `enabled`, `auto_cert`, `domains`, `cert_file`, `key_file`, `cert_dir` |
+| `[ssl]` | `enabled`, `auto_cert`, `domains`, `cert_file`, `key_file` |
 | `[log]` | `level` (debug/info/warn/error), `format` (text/json) |
 
-### SSL / Custom Domain
+## Production Deployment
 
-Kast supports HTTPS with automatic Let's Encrypt certificates or manual cert files.
+Three deployment models are supported:
 
-**Auto-cert (recommended for production):**
+```mermaid
+graph LR
+    subgraph cf["Option A · Cloudflare  ★ recommended"]
+        U1["Visitor"] -- HTTPS --> CF["Cloudflare<br/>Full Strict"]
+        CF -- "HTTPS :443<br/>Origin Certificate" --> K1["Kast"]
+    end
+
+    subgraph le["Option B · Direct + Let's Encrypt"]
+        I2["Internet"] -- "HTTPS :443" --> K2["Kast<br/>auto_cert = true"]
+        K2 <-.-> LE["Let's Encrypt"]
+    end
+
+    subgraph rp["Option C · Reverse Proxy"]
+        I3["Internet"] -- "HTTPS :443" --> RP["nginx / Caddy"]
+        RP -- "HTTP :8080" --> K3["Kast<br/>trust_proxy = true"]
+    end
+```
+
+---
+
+### Option A — Cloudflare + Origin Certificate ★
+
+The simplest production setup for Cloudflare users. Cloudflare issues a free origin certificate valid for **15 years** — no renewal, no ACME challenges, no port 443 required on the firewall for cert issuance.
+
+**1. Create a Cloudflare Origin Certificate**
+
+In the Cloudflare dashboard: **SSL/TLS → Origin Server → Create Certificate**.
+Accept the defaults (RSA, 15-year validity), add your hostname(s), and click Create.
+Download both files:
+
+- **Origin Certificate** → save as `certs/origin.pem`
+- **Private Key** → save as `certs/origin.key`
+
+Place them in a `certs/` directory at the root of the repo (next to `docker-compose.yml`).
+
+**2. Configure your `.env`**
+
+```bash
+KAST_PUBLIC_URL=https://radio.example.com
+KAST_CORS_ORIGINS=https://radio.example.com
+KAST_SSL_ENABLED=true
+KAST_SSL_CERT_FILE=/app/certs/origin.pem
+KAST_SSL_KEY_FILE=/app/certs/origin.key
+KAST_TRUST_PROXY=true
+```
+
+**3. Uncomment port 443 and the cert volume in `docker-compose.yml`**
+
+```yaml
+ports:
+  - "8080:8080"
+  - "443:443"       # ← uncomment
+volumes:
+  # ...
+  - ./certs:/app/certs:ro   # ← uncomment
+```
+
+**4. Set Cloudflare SSL mode to Full (strict)**
+
+In the Cloudflare dashboard: **SSL/TLS → Overview → Full (strict)**.
+
+**5. Restart**
+
+```bash
+docker compose down && docker compose up -d
+```
+
+---
+
+### Option B — Direct + Let's Encrypt
+
+Kast obtains and renews TLS certificates automatically via ACME HTTP-01. Port 443 must be reachable from the internet; Cloudflare proxying (orange cloud) must be **off** for the domain.
+
+In your `.env`:
+
+```bash
+KAST_PUBLIC_URL=https://radio.example.com
+KAST_SSL_ENABLED=true
+KAST_SSL_DOMAINS=radio.example.com
+```
+
+Uncomment port 443 in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "8080:8080"
+  - "443:443"
+```
+
+Kast fetches the certificate on first startup and renews it automatically. The HTTP listener on `:8080` becomes a permanent redirect to HTTPS.
+
+Alternatively, configure directly in `kast.toml`:
 
 ```toml
 [ssl]
@@ -119,21 +213,48 @@ enabled   = true
 auto_cert = true
 domains   = ["radio.example.com"]
 cert_dir  = "./data/certs"
-http_addr = ":443"
 ```
 
-When `auto_cert = true`, Kast automatically obtains and renews TLS certificates from Let's Encrypt. The HTTP listener (`[server].http_addr`) becomes a redirect-to-HTTPS server. Port 443 must be reachable from the internet.
+---
 
-**Manual certificates:**
+### Option C — Reverse Proxy (nginx / Caddy)
 
-```toml
-[ssl]
-enabled   = true
-auto_cert = false
-cert_file = "/path/to/fullchain.pem"
-key_file  = "/path/to/privkey.pem"
-http_addr = ":443"
+Let your reverse proxy handle TLS termination and pass plain HTTP to Kast. Set `KAST_TRUST_PROXY=true` so Kast reads the real client IP from `X-Forwarded-For`.
+
+**Caddy** (automatic HTTPS, simplest):
+
+```caddyfile
+radio.example.com {
+    reverse_proxy localhost:8080
+}
 ```
+
+**nginx** (snippet):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name radio.example.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+In `.env`:
+
+```bash
+KAST_TRUST_PROXY=true
+```
+
+---
 
 ## API Reference
 
@@ -187,7 +308,7 @@ kast/
 │   │   ├── playlist/          # Playlist CRUD
 │   │   ├── source/            # Live source handler
 │   │   └── ytimport/          # YouTube import (yt-dlp)
-│   ├── kast.toml              # Configuration file
+│   ├── kast.toml              # Configuration template
 │   └── Dockerfile
 ├── dashboard/                 # Next.js admin dashboard
 │   ├── app/                   # App Router pages
@@ -216,9 +337,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Commit your changes
+4. Push to the branch and open a Pull Request
 
 ## Tech Stack
 

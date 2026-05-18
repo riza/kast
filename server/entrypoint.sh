@@ -60,5 +60,26 @@ if [ -n "$KAST_CORS_ORIGINS" ]; then
     sed -i "s|^cors_origins = \[.*\]|cors_origins = [\"${KAST_CORS_ORIGINS}\"]|" "$CONFIG"
 fi
 
+if [ -n "$KAST_TRUST_PROXY" ]; then
+    sed -i "s|^trust_proxy = false|trust_proxy = true|" "$CONFIG"
+fi
+
+if [ "$KAST_SSL_ENABLED" = "true" ]; then
+    sed -i "s|^enabled = false|enabled = true|" "$CONFIG"
+fi
+
+if [ -n "$KAST_SSL_CERT_FILE" ]; then
+    set_toml_string "cert_file" "$KAST_SSL_CERT_FILE"
+fi
+
+if [ -n "$KAST_SSL_KEY_FILE" ]; then
+    set_toml_string "key_file" "$KAST_SSL_KEY_FILE"
+fi
+
+if [ -n "$KAST_SSL_DOMAINS" ]; then
+    DOMAIN_ARRAY=$(python3 -c "import sys, json; print(json.dumps([x.strip() for x in sys.argv[1].split(',')]))" "$KAST_SSL_DOMAINS")
+    sed -i "s|^domains = \[.*\]|domains = ${DOMAIN_ARRAY}|" "$CONFIG"
+fi
+
 # Drop to non-root user and start the server.
 exec su-exec kast:1001 "$@"

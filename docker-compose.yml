@@ -13,6 +13,8 @@ services:
         BUILD_TIME: ${BUILD_TIME:-unknown}
     ports:
       - "8080:8080"
+      # Uncomment for HTTPS — also uncomment the ./certs volume below:
+      # - "443:443"
     volumes:
       - kast_config:/app/config
       - kast_data:/app/data
@@ -21,6 +23,8 @@ services:
       - ./server/data/mounts:/app/data/mounts
       - ./server/data/library:/app/data/library
       - ./server/data/playlists:/app/data/playlists
+      # Uncomment to mount TLS certificates (Cloudflare Origin Cert or manual):
+      # - ./certs:/app/certs:ro
     restart: unless-stopped
     environment:
       - GOGC=100
@@ -32,6 +36,12 @@ services:
       - KAST_PUBLIC_URL=${KAST_PUBLIC_URL:-}
       # Comma-free single origin for CORS — typically your dashboard URL
       - KAST_CORS_ORIGINS=${KAST_CORS_ORIGINS:-}
+      # SSL — see README → Production Deployment for setup guide
+      - KAST_SSL_ENABLED=${KAST_SSL_ENABLED:-}
+      - KAST_SSL_CERT_FILE=${KAST_SSL_CERT_FILE:-}
+      - KAST_SSL_KEY_FILE=${KAST_SSL_KEY_FILE:-}
+      - KAST_SSL_DOMAINS=${KAST_SSL_DOMAINS:-}
+      - KAST_TRUST_PROXY=${KAST_TRUST_PROXY:-}
 
   dashboard:
     build:
