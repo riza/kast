@@ -49,6 +49,16 @@ type Mount struct {
 	PlayerShowPlaylist bool   `json:"player_show_playlist"`
 }
 
+// MetadataUpdate is the DTO for updating a mount's editable metadata fields.
+type MetadataUpdate struct {
+	Description string `json:"description"`
+	Genre       string `json:"genre"`
+	Website     string `json:"website"`
+	Codec       string `json:"codec"`
+	Bitrate     string `json:"bitrate"`
+	Protocol    string `json:"protocol"`
+}
+
 // PlayerConfigUpdate is the DTO for updating a mount's player config.
 type PlayerConfigUpdate struct {
 	StationName  string `json:"player_station_name"`
@@ -63,6 +73,21 @@ type PlayerConfigUpdate struct {
 }
 
 var validName = regexp.MustCompile(`^/[a-z0-9_\-]{1,64}$`)
+var validBitrate = regexp.MustCompile(`^\d{1,4}k$`)
+
+// ValidCodec returns true if c is a supported codec.
+func ValidCodec(c string) bool {
+	switch c {
+	case "AAC", "MP3", "OPUS":
+		return true
+	}
+	return false
+}
+
+// ValidBitrate returns true if b matches the NNNk format (e.g. "128k").
+func ValidBitrate(b string) bool {
+	return validBitrate.MatchString(b)
+}
 
 // ErrNotFound is returned when a mount does not exist.
 var ErrNotFound = errors.New("mount not found")
@@ -145,9 +170,15 @@ func (m *Manager) Create(req CreateRequest) (*Mount, error) {
 	if codec == "" {
 		codec = "AAC"
 	}
+	if !ValidCodec(codec) {
+		return nil, fmt.Errorf("unsupported codec: %s (must be AAC, MP3, or OPUS)", codec)
+	}
 	bitrate := req.Bitrate
 	if bitrate == "" {
 		bitrate = "128k"
+	}
+	if !ValidBitrate(bitrate) {
+		return nil, fmt.Errorf("invalid bitrate: %s (must match NNNk format)", bitrate)
 	}
 	protocol := strings.ToUpper(req.Protocol)
 	if protocol != "LL-HLS" {
@@ -253,6 +284,48 @@ func (m *Manager) UpdatePlayerConfig(name string, cfg PlayerConfigUpdate) error 
 	)
 	if err != nil {
 		slog.Error("mount: db update player config", "err", err)
+	}
+	return nil
+}
+
+// UpdateMetadata saves editable metadata fields for a mount.
+func (m *Manager) UpdateMetadata(name string, req MetadataUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mt, ok := m.mounts[name]
+	if !ok {
+		return ErrNotFound
+	}
+	mt.Description = req.Description
+	mt.Genre       = req.Genre
+	mt.Website     = req.Website
+
+	codec := strings.ToUpper(req.Codec)
+	if codec != "" {
+		if !ValidCodec(codec) {
+			return fmt.Errorf("unsupported codec: %s (must be AAC, MP3, or OPUS)", codec)
+		}
+		mt.Codec = codec
+	}
+	bitrate := req.Bitrate
+	if bitrate != "" {
+		if !ValidBitrate(bitrate) {
+			return fmt.Errorf("invalid bitrate: %s (must match NNNk format)", bitrate)
+		}
+		mt.Bitrate = bitrate
+	}
+	protocol := strings.ToUpper(req.Protocol)
+	if protocol == "HLS" || protocol == "LL-HLS" {
+		mt.Protocol = protocol
+	}
+
+	_, err := m.db.Exec(`
+		UPDATE mounts SET description=?, genre=?, website=?, codec=?, bitrate=?, protocol=?
+		WHERE name=?`,
+		mt.Description, mt.Genre, mt.Website, mt.Codec, mt.Bitrate, mt.Protocol, name,
+	)
+	if err != nil {
+		slog.Error("mount: db update metadata", "err", err)
 	}
 	return nil
 }

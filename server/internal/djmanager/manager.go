@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/riza/kast/internal/autodj"
@@ -52,12 +53,14 @@ type Manager struct {
 	segmenter *hls.Segmenter
 	mounts    *mount.Manager
 	db        *sql.DB
+	playlists *playlist.Manager
+	scanner   *library.Scanner
 	Trackers  *hls.TrackerRegistry
 	WebRTC    *webrtcmanager.Manager
 }
 
-// NewManager returns a Manager wired to the given segmenter, mount manager, and db.
-func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB) *Manager {
+// NewManager returns a Manager wired to the given segmenter, mount manager, db, playlists, and scanner.
+func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, playlists *playlist.Manager, scanner *library.Scanner) *Manager {
 	return &Manager{
 		sessions:  make(map[string]*session),
 		history:   make(map[string][]*library.Track),
@@ -65,6 +68,8 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB) *Ma
 		segmenter: segmenter,
 		mounts:    mounts,
 		db:        db,
+		playlists: playlists,
+		scanner:   scanner,
 		WebRTC:    webrtcmanager.New(),
 	}
 }
@@ -100,10 +105,18 @@ func (m *Manager) Start(
 	// Pipe: AutoDJ → ffmpeg stdin (HLS segmenter).
 	pipeR, pipeW := io.Pipe()
 
-	// Determine protocol from mount config.
+	// Determine config from mount.
 	llhls := false
+	codec := "AAC"
+	bitrate := "128k"
 	if mt, err := m.mounts.Get(mountName); err == nil {
 		llhls = mt.Protocol == "LL-HLS"
+		if mt.Codec != "" {
+			codec = mt.Codec
+		}
+		if mt.Bitrate != "" {
+			bitrate = mt.Bitrate
+		}
 	}
 
 	// Allocate a UDP port for WebRTC RTP input. Failures are non-fatal: HLS
@@ -116,7 +129,7 @@ func (m *Manager) Start(
 	}
 
 	// Start the HLS ffmpeg process (with optional RTP output for WebRTC).
-	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName, llhls, rtpPort)
+	hlsCmd, err := m.segmenter.StartMount(sessCtx, mountName, llhls, rtpPort, codec, bitrate)
 	if err != nil {
 		cancel()
 		pipeR.Close()
@@ -388,8 +401,8 @@ func (m *Manager) saveState() {
 
 // Restore reads active sessions from the database and restarts them.
 // Call after the initial library scan so that track data is available.
-func (m *Manager) Restore(ctx context.Context, playlists *playlist.Manager, scanner *library.Scanner) {
-	if m.db == nil {
+func (m *Manager) Restore(ctx context.Context) {
+	if m.db == nil || m.playlists == nil || m.scanner == nil {
 		return
 	}
 	rows, err := m.db.Query("SELECT mount, playlist_id, mode FROM autodj_sessions")
@@ -411,14 +424,14 @@ func (m *Manager) Restore(ctx context.Context, playlists *playlist.Manager, scan
 		return
 	}
 
-	allTracks := scanner.Tracks()
+	allTracks := m.scanner.Tracks()
 	byPath := make(map[string]*library.Track, len(allTracks))
 	for _, t := range allTracks {
 		byPath[t.Path] = t
 	}
 
 	for _, s := range saved {
-		pl, err := playlists.Get(s.PlaylistID)
+		pl, err := m.playlists.Get(s.PlaylistID)
 		if err != nil {
 			slog.Warn("djmanager: restore: playlist not found, skipping",
 				"mount", s.Mount, "playlist_id", s.PlaylistID)
@@ -443,7 +456,7 @@ func (m *Manager) Restore(ctx context.Context, playlists *playlist.Manager, scan
 		}
 		playlistID := s.PlaylistID
 		onTrackChange := func(path string) {
-			if err := playlists.SetLastPlayed(playlistID, path); err != nil {
+			if err := m.playlists.SetLastPlayed(playlistID, path); err != nil {
 				slog.Warn("djmanager: restore: failed to save last played", "err", err)
 			}
 		}
@@ -454,4 +467,58 @@ func (m *Manager) Restore(ctx context.Context, playlists *playlist.Manager, scan
 			slog.Info("djmanager: restored session", "mount", s.Mount, "playlist", pl.Name, "mode", s.Mode)
 		}
 	}
+}
+
+// RestartMount stops and immediately restarts the AutoDJ session for mountName
+// using the same playlist and mode. Returns true if a restart occurred, false
+// if no session was running. Call after audio config changes on a mount.
+func (m *Manager) RestartMount(mountName string) (bool, error) {
+	if m.playlists == nil || m.scanner == nil {
+		return false, nil
+	}
+	m.mu.Lock()
+	sess, ok := m.sessions[mountName]
+	if !ok {
+		m.mu.Unlock()
+		return false, nil
+	}
+	playlistID := sess.playlistID
+	modeStr := sess.mode
+	m.mu.Unlock()
+
+	pl, err := m.playlists.Get(playlistID)
+	if err != nil {
+		return false, fmt.Errorf("djmanager: restart %s: playlist %s: %w", mountName, playlistID, err)
+	}
+
+	allTracks := m.scanner.Tracks()
+	byPath := make(map[string]*library.Track, len(allTracks))
+	for _, t := range allTracks {
+		byPath[t.Path] = t
+	}
+	var tracks []*library.Track
+	for _, p := range pl.TrackPaths {
+		if t, ok := byPath[p]; ok {
+			tracks = append(tracks, t)
+		}
+	}
+	if len(tracks) == 0 {
+		return false, fmt.Errorf("djmanager: restart %s: no tracks available", mountName)
+	}
+
+	mode := autodj.ModeSequential
+	if strings.EqualFold(modeStr, "shuffle") {
+		mode = autodj.ModeShuffle
+	}
+	onTrackChange := func(path string) {
+		if err := m.playlists.SetLastPlayed(playlistID, path); err != nil {
+			slog.Warn("djmanager: restart: failed to save last played", "err", err)
+		}
+	}
+
+	if err := m.Start(context.Background(), mountName, playlistID, "", onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+		return false, err
+	}
+	slog.Info("djmanager: restarted (audio config change)", "mount", mountName)
+	return true, nil
 }

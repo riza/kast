@@ -125,7 +125,7 @@ func NewApp(
 	djm *djmanager.Manager,
 	ytm *ytimport.Manager,
 ) *fiber.App {
-	app := fiber.New(fiber.Config{
+	fiberCfg := fiber.Config{
 		AppName:               "Kast",
 		DisableStartupMessage: true,
 		BodyLimit:             500 * 1024 * 1024, // 500 MB for uploads
@@ -133,7 +133,14 @@ func NewApp(
 		WriteTimeout:          0,
 		IdleTimeout:           120 * time.Second,
 		StreamRequestBody:     true,
-	})
+	}
+	if cfg.Server.TrustProxy {
+		// When running behind a reverse proxy (nginx, Caddy, Traefik, etc.),
+		// use the X-Forwarded-For header for the real client IP instead of
+		// the Docker gateway IP seen on the raw connection.
+		fiberCfg.ProxyHeader = fiber.HeaderXForwardedFor
+	}
+	app := fiber.New(fiberCfg)
 
 	// ── Global middleware ────────────────────────────────────────────────────
 	app.Use(recover.New())
@@ -398,17 +405,20 @@ func NewApp(
 	api.Put("/users/:id", adminOnly, uh.Update)
 	api.Delete("/users/:id", adminOnly, uh.Delete)
 
-	mh  := &handler.Mounts{Manager: mounts}
+	mh  := &handler.Mounts{Manager: mounts, DJManager: djm}
 	lh  := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
 	plh := &handler.Playlists{Manager: playlists}
 	djh := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner}
 	sh  := &handler.Settings{Cfg: cfg, ConfigPath: configPath}
+	svh := &handler.Server{ConfigPath: configPath, DataDir: "./data"}
 	whep := &handler.WHEP{Manager: djm.WebRTC}
 	yth  := &handler.YTImport{Manager: ytm}
 
 	api.Get("/status", handler.Status)
 	api.Get("/settings", adminOnly, sh.Get)
 	api.Patch("/settings", adminOnly, sh.Update)
+	api.Post("/server/restart", adminOnly, svh.Restart)
+	api.Delete("/server/reset", adminOnly, svh.FactoryReset)
 
 	api.Get("/listeners", func(c *fiber.Ctx) error {
 		entries := listenerTrack.all()
@@ -422,6 +432,7 @@ func NewApp(
 	api.Get("/mounts", mh.List)
 	api.Post("/mounts", mh.Create)
 	api.Get("/mounts/:name", mh.Get)
+	api.Patch("/mounts/:name", mh.Update)
 	api.Delete("/mounts/:name", mh.Delete)
 	api.Put("/mounts/:name/player", func(c *fiber.Ctx) error {
 		mountName := "/" + c.Params("name")

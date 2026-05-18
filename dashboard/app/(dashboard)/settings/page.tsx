@@ -8,9 +8,15 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { api, type APISettings } from "@/lib/api"
+import { SettingsContext } from "@/app/(dashboard)/layout"
+import { ChevronsUpDown } from "lucide-react"
 
 // ── Design primitives ──
 
@@ -96,6 +102,41 @@ function RestartNote() {
   )
 }
 
+function TimezoneCombobox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = React.useState(false)
+  const zones = React.useMemo(() =>
+    typeof Intl !== "undefined" && "supportedValuesOf" in Intl
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? (Intl as any).supportedValuesOf("timeZone") as string[]
+      : ["UTC"],
+  [])
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button className={cn(inputCls, "flex items-center justify-between")}>
+          <span className="font-mono truncate">{value || "UTC"}</span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-ink-500 ml-2" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search timezone…" />
+          <CommandList>
+            <CommandEmpty>No timezone found.</CommandEmpty>
+            <CommandGroup>
+              {zones.map((tz) => (
+                <CommandItem key={tz} value={tz} onSelect={() => { onChange(tz); setOpen(false) }}>
+                  {tz}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 // ── Tabs ──
 
 const TABS = [
@@ -113,6 +154,7 @@ const DEFAULT: APISettings = {
   public_url:           "",
   http_addr:            ":8080",
   cors_origins:         ["*"],
+  trust_proxy:          false,
   ssl_enabled:          false,
   ssl_auto_cert:        false,
   ssl_domains:          [],
@@ -122,17 +164,21 @@ const DEFAULT: APISettings = {
   hls_playlist_size:    5,
   log_level:            "info",
   log_format:           "text",
+  timezone:             "UTC",
 }
 
 export default function SettingsPage() {
+  const { refresh: refreshSettings } = React.useContext(SettingsContext)
   const [tab, setTab]         = React.useState<TabId>("server")
   const [cfg, setCfg]         = React.useState<APISettings>(DEFAULT)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving]   = React.useState(false)
 
   // Danger zone
-  const [resetInput, setResetInput] = React.useState("")
-  const [resetOpen, setResetOpen]   = React.useState(false)
+  const [resetInput,   setResetInput]   = React.useState("")
+  const [resetOpen,    setResetOpen]    = React.useState(false)
+  const [restartOpen,  setRestartOpen]  = React.useState(false)
+  const [restarting,   setRestarting]   = React.useState(false)
 
   React.useEffect(() => {
     api.settings.get()
@@ -146,6 +192,7 @@ export default function SettingsPage() {
     try {
       const updated = await api.settings.update(cfg)
       setCfg(updated)
+      refreshSettings()
       toast.success("Settings saved")
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Save failed")
@@ -156,6 +203,31 @@ export default function SettingsPage() {
 
   const set = <K extends keyof APISettings>(key: K, val: APISettings[K]) =>
     setCfg((prev) => ({ ...prev, [key]: val }))
+
+  const handleRestart = async () => {
+    setRestartOpen(false)
+    setRestarting(true)
+    try {
+      await api.server.restart()
+      toast.success("Server restarting — page will reload shortly…")
+      setTimeout(() => window.location.reload(), 5000)
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to restart server")
+      setRestarting(false)
+    }
+  }
+
+  const handleFactoryReset = async () => {
+    setResetOpen(false)
+    setResetInput("")
+    try {
+      await api.server.factoryReset()
+      toast.success("Factory reset initiated — redirecting…")
+      setTimeout(() => { window.location.href = "/login" }, 3000)
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Factory reset failed")
+    }
+  }
 
   if (loading) {
     return (
@@ -208,6 +280,10 @@ export default function SettingsPage() {
                 <KInput value={cfg.public_url} onChange={(v) => set("public_url", v)}
                   placeholder="https://stream.example.com" monospace />
               </Field>
+              <Field label="Timezone"
+                hint="IANA timezone for time displays in this dashboard (e.g. Europe/Istanbul, America/New_York).">
+                <TimezoneCombobox value={cfg.timezone} onChange={(v) => set("timezone", v)} />
+              </Field>
             </FieldGroup>
           </Section>
 
@@ -226,6 +302,12 @@ export default function SettingsPage() {
                   onChange={(e) => set("cors_origins", e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))}
                 />
               </Field>
+              <Row
+                label="Trust Proxy"
+                description="Read real client IPs from X-Forwarded-For. Enable when running behind a reverse proxy (nginx, Caddy, Traefik) or in Docker. Leave off for direct deployments."
+              >
+                <Toggle checked={cfg.trust_proxy ?? false} onCheckedChange={(v) => set("trust_proxy", v)} />
+              </Row>
             </FieldGroup>
           </Section>
 
@@ -348,23 +430,12 @@ export default function SettingsPage() {
 
             <div className="px-5 py-4 border-b border-red-500/10">
               <Row label="Restart Server" description="Gracefully restarts Kast. Active streams will be interrupted briefly.">
-                <AlertDialog>
-                  <button
-                    onClick={() => document.getElementById("restart-trigger")?.click()}
-                    className="h-8 px-3 rounded-md border border-ink-800 hover:bg-ink-800 text-[12.5px] text-ink-200 transition-colors">
-                    Restart
-                  </button>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Restart server?</AlertDialogTitle>
-                      <AlertDialogDescription>All active streams will be briefly interrupted. Listeners will reconnect automatically.</AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => toast.success("Server restarting…")}>Restart</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <button
+                  onClick={() => setRestartOpen(true)}
+                  disabled={restarting}
+                  className="h-8 px-3 rounded-md border border-ink-800 hover:bg-ink-800 text-[12.5px] text-ink-200 transition-colors disabled:opacity-50">
+                  {restarting ? "Restarting…" : "Restart"}
+                </button>
               </Row>
             </div>
 
@@ -379,6 +450,20 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Restart dialog */}
+      <AlertDialog open={restartOpen} onOpenChange={setRestartOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restart server?</AlertDialogTitle>
+            <AlertDialogDescription>All active streams will be briefly interrupted. Listeners will reconnect automatically.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRestart}>Restart</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Factory reset dialog */}
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
@@ -397,7 +482,7 @@ export default function SettingsPage() {
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setResetInput("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction variant="destructive" disabled={resetInput !== "RESET"}
-              onClick={() => { setResetOpen(false); setResetInput(""); toast.error("Factory reset initiated") }}>
+              onClick={handleFactoryReset}>
               Reset Everything
             </AlertDialogAction>
           </AlertDialogFooter>

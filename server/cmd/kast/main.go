@@ -100,7 +100,7 @@ func run() error {
 		return fmt.Errorf("playlist manager: %w", err)
 	}
 
-	djm := djmanager.NewManager(segmenter, mounts, database)
+	djm := djmanager.NewManager(segmenter, mounts, database, playlists, scanner)
 
 	importDir := "./data/music"
 	if len(cfg.Library.ScanDirs) > 0 {
@@ -120,7 +120,7 @@ func run() error {
 		}
 		// Restore AutoDJ sessions that were active before the last shutdown.
 		// Runs after the scan so that track data is available.
-		djm.Restore(context.Background(), playlists, scanner)
+		djm.Restore(context.Background())
 	}()
 
 	// ── Start servers ────────────────────────────────────────────────────────

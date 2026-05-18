@@ -465,7 +465,6 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
   // Poll job status and create playlist when done
   React.useEffect(() => {
     if (!jobId) return
-    // Capture playlist name at job-start time (step just changed to "downloading")
     const capturedName = playlistName.trim() || "YouTube Import"
     let handled = false
 
@@ -480,7 +479,6 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
       }
 
       setCreating(true)
-      // Wait for backend library rescan to pick up new files
       await new Promise((r) => setTimeout(r, 3000))
 
       const paths = j.items
@@ -518,7 +516,7 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
           clearInterval(timer)
           finish(j)
         }
-      } catch { /* ignore poll errors */ }
+      } catch { /* ignore */ }
     }
 
     const timer = setInterval(poll, 1500)
@@ -540,184 +538,237 @@ function YouTubeToPlaylistDialog({ open, onOpenChange, onCreated }: {
       return next
     })
 
+  const doneCount    = jobItems.filter((i) => i.status === "done").length
+  const failCount    = jobItems.filter((i) => i.status === "error").length
+  const activeCount  = jobItems.filter((i) => i.status === "pending" || i.status === "downloading").length
+  const overallPct   = jobItems.length > 0 ? Math.round((doneCount / jobItems.length) * 100) : 0
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="sm:max-w-lg bg-ink-900 border-ink-800">
-        <DialogHeader>
-          <DialogTitle className="text-ink-100 flex items-center gap-2">
-            <YtIcon className="h-4 w-4 text-red-500" />
-            Import from YouTube
-          </DialogTitle>
-          <DialogDescription className="text-ink-500">
-            {step === "input" && "Paste a YouTube video or playlist URL to download audio and create a playlist."}
-            {step === "preview" && (preview?.type === "playlist"
+      <DialogContent className="p-0 sm:max-w-[580px] max-h-[88vh] flex flex-col gap-0 bg-ink-900 border-ink-800 overflow-hidden">
+
+        {/* Header */}
+        <div className="shrink-0 px-5 pt-5 pb-4 pr-12 border-b border-ink-800">
+          <div className="flex items-center gap-2.5">
+            <YtIcon className="h-4 w-4 text-red-500 shrink-0" />
+            <span className="text-[14px] font-semibold text-ink-100">Import from YouTube</span>
+          </div>
+          <p className="mt-1 text-[12px] text-ink-500 leading-relaxed">
+            {step === "input"       && "Paste a YouTube video or playlist URL to download audio and create a playlist."}
+            {step === "preview"     && (preview?.type === "playlist"
               ? `${preview.items.length} tracks found — select which to download`
               : "Video found — confirm to download")}
-            {step === "downloading" && (creating ? "Creating playlist…" : "Downloading audio files…")}
-          </DialogDescription>
-        </DialogHeader>
+            {step === "downloading" && (creating ? "Creating playlist…" : `Downloading… ${doneCount} / ${jobItems.length} done`)}
+          </p>
+        </div>
 
-        {/* ── Step 1: URL + name ── */}
-        {step === "input" && (
-          <div className="space-y-3 py-1">
-            <div>
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">YouTube URL</p>
-              <input
-                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
-                placeholder="https://www.youtube.com/watch?v=… or /playlist?list=…"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handlePreview()}
-                autoFocus
-              />
-            </div>
-            <div>
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">Playlist Name</p>
-              <input
-                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
-                placeholder="Auto-filled from YouTube title (optional)"
-                value={playlistName}
-                onChange={(e) => setPlaylistName(e.target.value)}
-              />
-            </div>
-            <p className="text-[11px] text-ink-600 leading-relaxed">
-              Downloads audio as MP3. For personal use only — only download content you own or have permission to use.
-            </p>
-          </div>
-        )}
+        {/* Body */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
 
-        {/* ── Step 2: Preview ── */}
-        {step === "preview" && preview && (
-          <div className="space-y-3 py-1">
-            <div>
-              <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-500">Playlist Name</p>
-              <input
-                className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
-                value={playlistName}
-                onChange={(e) => setPlaylistName(e.target.value)}
-                placeholder="Playlist name"
-              />
-            </div>
-
-            {preview.type === "playlist" && (
-              <div
-                className="flex items-center gap-2.5 cursor-pointer py-1"
-                onClick={toggleAll}
-              >
-                <div className={cn(
-                  "flex h-4 w-4 shrink-0 items-center justify-center border",
-                  selected.size === preview.items.length ? "border-k-500 bg-k-500" : "border-ink-700"
-                )}>
-                  {selected.size === preview.items.length && <Check className="h-2.5 w-2.5 text-white" />}
-                </div>
-                <span className="text-[12px] text-ink-400">
-                  Select all ({selected.size} / {preview.items.length})
-                </span>
+          {/* Step 1: URL + name */}
+          {step === "input" && (
+            <div className="px-5 py-5 space-y-4 overflow-y-auto">
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-500">YouTube URL</p>
+                <input
+                  className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                  placeholder="https://www.youtube.com/watch?v=… or /playlist?list=…"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handlePreview()}
+                  autoFocus
+                />
               </div>
-            )}
+              <div>
+                <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-500">
+                  Playlist Name <span className="normal-case text-ink-700">(optional)</span>
+                </p>
+                <input
+                  className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                  placeholder="Auto-filled from YouTube title"
+                  value={playlistName}
+                  onChange={(e) => setPlaylistName(e.target.value)}
+                />
+              </div>
+              <p className="text-[11px] text-ink-700 leading-relaxed">
+                Downloads audio as MP3. Only download content you own or have permission to use.
+              </p>
+            </div>
+          )}
 
-            <div className="max-h-60 overflow-y-auto border border-ink-800">
-              {preview.items.map((item) => {
-                const isSel = selected.has(item.ytid)
-                return (
-                  <div
-                    key={item.ytid}
-                    className="kast-row flex items-center gap-3 px-3 py-2 border-b border-ink-800/60 last:border-0 cursor-pointer"
-                    onClick={() => toggleItem(item.ytid)}
+          {/* Step 2: Preview */}
+          {step === "preview" && preview && (
+            <>
+              {/* Fixed controls */}
+              <div className="shrink-0 px-5 py-4 space-y-3 border-b border-ink-800 bg-ink-900">
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-500">Playlist Name</p>
+                  <input
+                    className="h-9 w-full bg-ink-950 border border-ink-800 px-3 text-[13px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                    value={playlistName}
+                    onChange={(e) => setPlaylistName(e.target.value)}
+                    placeholder="Playlist name"
+                  />
+                </div>
+                {preview.type === "playlist" && (
+                  <button
+                    className="flex items-center gap-2.5 text-[12px] text-ink-400 hover:text-ink-200 transition-colors"
+                    onClick={toggleAll}
                   >
                     <div className={cn(
                       "flex h-4 w-4 shrink-0 items-center justify-center border",
-                      isSel ? "border-k-500 bg-k-500" : "border-ink-700"
+                      selected.size === preview.items.length ? "border-k-500 bg-k-500" : "border-ink-700"
                     )}>
-                      {isSel && <Check className="h-2.5 w-2.5 text-white" />}
+                      {selected.size === preview.items.length && <Check className="h-2.5 w-2.5 text-white" />}
                     </div>
-                    {item.thumbnail && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.thumbnail} alt="" className="h-8 w-14 shrink-0 object-cover" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12.5px] text-ink-100 font-medium truncate">{item.title}</p>
-                      <p className="text-[11px] text-ink-500 truncate">{item.artist}</p>
-                    </div>
-                    {item.duration_ms > 0 && (
-                      <span className="text-[11px] text-ink-500 font-mono shrink-0">
-                        {formatMs(item.duration_ms)}
-                      </span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Step 3: Downloading ── */}
-        {step === "downloading" && (
-          <div className="space-y-2 py-1">
-            {jobItems.length === 0 ? (
-              <div className="flex items-center gap-2 py-4 text-ink-500">
-                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                <span className="text-[12.5px]">Starting download…</span>
+                    <span>{selected.size} / {preview.items.length} selected</span>
+                  </button>
+                )}
               </div>
-            ) : (
-              <>
-                {jobItems.map((item) => (
-                  <div key={item.ytid} className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      {item.status === "done"        && <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
-                      {item.status === "error"       && <XCircle      className="h-3.5 w-3.5 text-red-500 shrink-0" />}
-                      {item.status === "downloading" && <Loader2      className="h-3.5 w-3.5 animate-spin text-k-500 shrink-0" />}
-                      {item.status === "pending"     && <div className="h-3.5 w-3.5 shrink-0 rounded-full border border-ink-700" />}
-                      <span className="flex-1 truncate text-[12.5px] text-ink-200">{item.title}</span>
-                      {item.status === "downloading" && (
-                        <span className="font-mono text-[11px] text-ink-500 shrink-0">{Math.round(item.progress)}%</span>
+
+              {/* Scrollable track list */}
+              <div className="flex-1 overflow-y-auto">
+                {preview.items.map((item, idx) => {
+                  const isSel = selected.has(item.ytid)
+                  return (
+                    <div
+                      key={item.ytid}
+                      className="flex items-center gap-3 px-5 py-2.5 border-b border-ink-800/50 last:border-0 cursor-pointer hover:bg-white/[0.025] transition-colors"
+                      onClick={() => toggleItem(item.ytid)}
+                    >
+                      <div className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center border",
+                        isSel ? "border-k-500 bg-k-500" : "border-ink-700"
+                      )}>
+                        {isSel && <Check className="h-2.5 w-2.5 text-white" />}
+                      </div>
+                      <span className="font-mono text-[11px] text-ink-700 w-6 shrink-0 text-right tabular-nums">{idx + 1}</span>
+                      {item.thumbnail
+                        ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={item.thumbnail} alt="" className="h-9 w-16 shrink-0 object-cover" />
+                        ) : (
+                          <div className="h-9 w-16 shrink-0 bg-ink-800 flex items-center justify-center">
+                            <YtIcon className="h-3.5 w-3.5 text-ink-600" />
+                          </div>
+                        )
+                      }
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] text-ink-100 font-medium truncate">{item.title}</p>
+                        {item.artist && <p className="text-[11px] text-ink-500 truncate">{item.artist}</p>}
+                      </div>
+                      {item.duration_ms > 0 && (
+                        <span className="text-[11px] text-ink-500 font-mono shrink-0 tabular-nums">{formatMs(item.duration_ms)}</span>
                       )}
                     </div>
-                    {item.status === "downloading" && (
-                      <div className="ml-5 h-0.5 overflow-hidden bg-ink-800">
-                        <div className="h-full bg-k-500 transition-all duration-300" style={{ width: `${item.progress}%` }} />
-                      </div>
-                    )}
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Step 3: Downloading */}
+          {step === "downloading" && (
+            <>
+              {/* Overall progress bar */}
+              {jobItems.length > 0 && (
+                <div className="shrink-0 px-5 py-3 border-b border-ink-800">
+                  <div className="flex items-center justify-between mb-2 text-[11.5px]">
+                    <span className="text-ink-500">
+                      {doneCount} done{failCount > 0 ? ` · ${failCount} failed` : ""}{activeCount > 0 ? ` · ${activeCount} remaining` : ""}
+                    </span>
+                    <span className="font-mono text-ink-500 tabular-nums">{overallPct}%</span>
                   </div>
-                ))}
+                  <div className="h-0.5 bg-ink-800 overflow-hidden">
+                    <div className="h-full bg-k-500 transition-all duration-500" style={{ width: `${overallPct}%` }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Scrollable item list */}
+              <div className="flex-1 overflow-y-auto px-5 py-3 space-y-0.5">
+                {jobItems.length === 0 ? (
+                  <div className="flex items-center gap-2.5 py-6 text-ink-500">
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    <span className="text-[12.5px]">Starting download…</span>
+                  </div>
+                ) : (
+                  jobItems.map((item) => (
+                    <div key={item.ytid} className="py-2">
+                      <div className="flex items-center gap-2.5">
+                        {item.status === "done"        && <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />}
+                        {item.status === "error"       && <XCircle      className="h-3.5 w-3.5 text-red-500 shrink-0" />}
+                        {item.status === "downloading" && <Loader2      className="h-3.5 w-3.5 animate-spin text-k-500 shrink-0" />}
+                        {item.status === "pending"     && <div className="h-3.5 w-3.5 shrink-0 rounded-full border border-ink-700" />}
+                        <span className={cn(
+                          "flex-1 truncate text-[12.5px]",
+                          item.status === "done"  ? "text-ink-400" :
+                          item.status === "error" ? "text-red-400" : "text-ink-200"
+                        )}>
+                          {item.title}
+                        </span>
+                        {item.status === "downloading" && (
+                          <span className="font-mono text-[11px] text-k-400 shrink-0 tabular-nums">{Math.round(item.progress)}%</span>
+                        )}
+                      </div>
+                      {item.status === "downloading" && (
+                        <div className="mt-1.5 ml-6 h-0.5 overflow-hidden bg-ink-800">
+                          <div className="h-full bg-k-500 transition-all duration-300" style={{ width: `${item.progress}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
                 {creating && (
-                  <div className="flex items-center gap-2 border-t border-ink-800 pt-3 mt-1 text-ink-400">
+                  <div className="flex items-center gap-2.5 border-t border-ink-800 pt-3 mt-2 text-ink-400">
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
                     <span className="text-[12px]">Creating playlist…</span>
                   </div>
                 )}
-              </>
-            )}
-          </div>
-        )}
+              </div>
+            </>
+          )}
+        </div>
 
-        <DialogFooter>
+        {/* Footer */}
+        <div className="shrink-0 flex items-center justify-between gap-2 px-5 py-4 border-t border-ink-800">
           <button
             onClick={handleClose}
             disabled={step === "downloading"}
             className="h-9 px-4 border border-ink-800 hover:bg-ink-800 text-[13px] text-ink-200 transition-colors disabled:opacity-40"
           >
-            Cancel
+            {step === "downloading" ? "Running…" : "Cancel"}
           </button>
-          {step === "input" && (
-            <button
-              onClick={handlePreview}
-              disabled={!url.trim() || previewing}
-              className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
-            >
-              {previewing ? "Loading…" : "Preview"}
-            </button>
-          )}
-          {step === "preview" && (
-            <button
-              onClick={handleStartDownload}
-              disabled={selected.size === 0 || !playlistName.trim()}
-              className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
-            >
-              Download {selected.size > 0 ? `${selected.size} track${selected.size !== 1 ? "s" : ""}` : ""}
-            </button>
-          )}
-        </DialogFooter>
+          <div className="flex items-center gap-2">
+            {step === "preview" && (
+              <button
+                onClick={() => setStep("input")}
+                className="h-9 px-3 border border-ink-800 hover:bg-ink-800 text-[12.5px] text-ink-400 transition-colors"
+              >
+                ← Back
+              </button>
+            )}
+            {step === "input" && (
+              <button
+                onClick={handlePreview}
+                disabled={!url.trim() || previewing}
+                className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors inline-flex items-center gap-2"
+              >
+                {previewing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {previewing ? "Loading…" : "Preview →"}
+              </button>
+            )}
+            {step === "preview" && (
+              <button
+                onClick={handleStartDownload}
+                disabled={selected.size === 0 || !playlistName.trim()}
+                className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
+              >
+                Download {selected.size > 0 ? `${selected.size} track${selected.size !== 1 ? "s" : ""}` : ""}
+              </button>
+            )}
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   )

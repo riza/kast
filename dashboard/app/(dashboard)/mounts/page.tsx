@@ -9,6 +9,7 @@ import {
 import { Plus, Search, Copy, ChevronRight } from "lucide-react"
 import { toast } from "sonner"
 import { api, type APIMount } from "@/lib/api"
+import { SettingsContext } from "@/app/(dashboard)/layout"
 
 // ── Types ──
 
@@ -122,7 +123,7 @@ function CreateMountDialog({ onCreated }: { onCreated: (m: Mount) => void }) {
                   <label className="text-[11px] uppercase tracking-wider text-ink-500 font-mono">Codec</label>
                   <Select value={codec} onValueChange={setCodec}>
                     <SelectTrigger className="h-8 bg-ink-950 border-ink-800 text-ink-100"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="AAC">AAC</SelectItem><SelectItem value="MP3">MP3</SelectItem><SelectItem value="Opus">Opus</SelectItem></SelectContent>
+                    <SelectContent><SelectItem value="AAC">AAC</SelectItem><SelectItem value="MP3">MP3</SelectItem><SelectItem value="OPUS">OPUS</SelectItem></SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
@@ -172,6 +173,7 @@ function CreateMountDialog({ onCreated }: { onCreated: (m: Mount) => void }) {
 
 export default function MountsPage() {
   const router = useRouter()
+  const { publicUrl } = React.useContext(SettingsContext)
   const [mounts, setMounts]             = React.useState<Mount[]>([])
   const [loading, setLoading]           = React.useState(true)
   const [search, setSearch]             = React.useState("")
@@ -281,7 +283,7 @@ export default function MountsPage() {
               <span className="text-right text-[12.5px] font-mono text-ink-100">{mount.listeners}</span>
               <div className="row-actions flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                 <KBtn title="Copy HLS URL" onClick={() => {
-                  const base = `${window.location.protocol}//${window.location.hostname}:8080`
+                  const base = (publicUrl || `${window.location.protocol}//${window.location.hostname}:8080`).replace(/\/$/, "")
                   navigator.clipboard.writeText(`${base}/hls/${toSlug(mount.name)}/index.m3u8`)
                   toast.success("Copied")
                 }}>

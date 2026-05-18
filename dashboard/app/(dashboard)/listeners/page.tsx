@@ -3,7 +3,8 @@
 import * as React from "react"
 import { RefreshCw } from "lucide-react"
 import { api, type APIListener, type APIMount, APIError } from "@/lib/api"
-import { cn } from "@/lib/utils"
+import { cn, formatInTZ } from "@/lib/utils"
+import { SettingsContext } from "@/app/(dashboard)/layout"
 
 const POLL_INTERVAL = 5_000
 
@@ -86,6 +87,7 @@ function ListenerRow({ entry, mountNames }: { entry: APIListener; mountNames: Ma
 // ── Page ──
 
 export default function ListenersPage() {
+  const { timezone } = React.useContext(SettingsContext)
   const [listeners, setListeners] = React.useState<APIListener[] | null>(null)
   const [mounts,    setMounts]    = React.useState<APIMount[]>([])
   const [error,     setError]     = React.useState<string | null>(null)
@@ -153,7 +155,7 @@ export default function ListenersPage() {
         >
           <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
           <span className="tabular-nums">
-            {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {formatInTZ(lastRefresh, timezone)}
           </span>
         </button>
       </div>

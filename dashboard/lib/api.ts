@@ -38,12 +38,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 // ── Response types (mirror Go JSON output) ───────────────────────────────────
 
 export type APIStatus = {
-  version:    string
-  git_commit: string
-  build_time: string
-  uptime_sec: number
-  go_version: string
-  os_arch:    string
+  version:     string
+  git_commit:  string
+  build_time:  string
+  uptime_sec:  number
+  go_version:  string
+  os_arch:     string
+  cpu_percent: number   // -1 = unavailable
+  mem_rss_mb:  number   // -1 = unavailable, otherwise RSS in MB
 }
 
 export type APIMount = {
@@ -166,6 +168,17 @@ export type CreateMountBody = {
   protocol?:       string
 }
 
+export type UpdateMountMetadataBody = {
+  description?: string
+  genre?:       string
+  website?:     string
+  codec?:       string
+  bitrate?:     string
+  protocol?:    string
+}
+
+export type APIUpdateMountResponse = APIMount & { autodj_restarted: boolean }
+
 export type CreatePlaylistBody = {
   name:          string
   description?:  string
@@ -238,6 +251,7 @@ export type APISettings = {
   public_url:           string
   http_addr:            string
   cors_origins:         string[]
+  trust_proxy:          boolean
   ssl_enabled:          boolean
   ssl_auto_cert:        boolean
   ssl_domains:          string[]
@@ -247,6 +261,7 @@ export type APISettings = {
   hls_playlist_size:    number
   log_level:            "debug" | "info" | "warn" | "error"
   log_format:           "text" | "json"
+  timezone:             string
 }
 
 export type APIListener = {
@@ -301,6 +316,12 @@ export const api = {
     }),
   },
 
+  /** POST /api/server/restart — DELETE /api/server/reset */
+  server: {
+    restart:      () => apiFetch<void>("/api/server/restart", { method: "POST" }),
+    factoryReset: () => apiFetch<void>("/api/server/reset",   { method: "DELETE" }),
+  },
+
   /** GET /api/autodj/sessions — all active sessions across mounts */
   autoDJSessions: () => apiFetch<APIAutoDJSession[]>("/api/autodj/sessions"),
 
@@ -321,6 +342,13 @@ export const api = {
     /** DELETE /api/mounts/{name} */
     delete: (name: string) =>
       apiFetch<void>(`/api/mounts/${slug(name)}`, { method: "DELETE" }),
+
+    /** PATCH /api/mounts/{name} — update editable metadata (description, genre, website, codec, bitrate, protocol) */
+    updateMetadata: (name: string, body: UpdateMountMetadataBody) =>
+      apiFetch<APIUpdateMountResponse>(`/api/mounts/${slug(name)}`, {
+        method: "PATCH",
+        body:   JSON.stringify(body),
+      }),
 
     /** PUT /api/mounts/{name}/player — update player customisation (admin only) */
     updatePlayerConfig: (name: string, body: PlayerConfigBody) =>

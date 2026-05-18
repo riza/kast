@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, Copy, Music2, SkipForward, Users, Palette, Plus } from "lucide-react"
+import { ArrowLeft, Copy, Music2, SkipForward, Users, Palette, Plus, Pencil, X, Check, TriangleAlert } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -18,16 +18,12 @@ import {
   api, type APINowPlaying, type PlayerConfigBody,
   type APIPlaylist, type APIAutoDJSession, type APIAutoDJTracks,
   type APIAutoDJTrackInfo, type APIListener,
+  type UpdateMountMetadataBody,
 } from "@/lib/api"
+
+const BITRATE_OPTIONS = ["64k", "96k", "128k", "192k", "256k", "320k"] as const
 import { type Mount, adaptApiMount, PulseDot, KBtn } from "../page"
-
-// ── Helpers ──
-
-function streamBaseUrl(): string {
-  if (typeof window === "undefined") return ""
-  return process.env.NEXT_PUBLIC_STREAM_URL
-    ?? `${window.location.protocol}//${window.location.hostname}:8080`
-}
+import { SettingsContext } from "@/app/(dashboard)/layout"
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -97,11 +93,54 @@ function fmtDuration(ms: number): string {
 
 // ── Tabs ──
 
-function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying, history }: {
+function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying, history, onUpdated }: {
   mount: Mount; nowPlaying: APINowPlaying; onRefreshNowPlaying: () => void; history: APIAutoDJTrackInfo[]
+  onUpdated: (patch: Partial<Mount>) => void
 }) {
-  const base = streamBaseUrl().replace(/\/$/, "")
+  const { publicUrl } = React.useContext(SettingsContext)
+  const base = (publicUrl || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8080` : "")).replace(/\/$/, "")
   const slug = mount.name.replace(/^\/+/, "")
+
+  const [editing, setEditing] = React.useState(false)
+  const [saving,  setSaving]  = React.useState(false)
+
+  // Edit field state — reset whenever mount changes or edit is cancelled
+  const [desc,     setDesc]     = React.useState(mount.description)
+  const [genre,    setGenre]    = React.useState(mount.genre)
+  const [website,  setWebsite]  = React.useState(mount.website)
+  const [codec,    setCodec]    = React.useState(mount.codec)
+  const [bitrate,  setBitrate]  = React.useState(mount.bitrate)
+  const [protocol, setProtocol] = React.useState(mount.protocol)
+
+  const openEdit = () => {
+    setDesc(mount.description); setGenre(mount.genre); setWebsite(mount.website)
+    setCodec(mount.codec); setBitrate(mount.bitrate); setProtocol(mount.protocol)
+    setEditing(true)
+  }
+  const cancelEdit = () => setEditing(false)
+
+  const handleSave = () => {
+    setSaving(true)
+    const body: UpdateMountMetadataBody = {
+      description: desc, genre, website, codec, bitrate, protocol,
+    }
+    api.mounts.updateMetadata(mount.name, body)
+      .then((updated) => {
+        toast.success(updated.autodj_restarted ? "Mount updated — AutoDJ restarted" : "Mount updated")
+        onUpdated({
+          description: updated.description, genre: updated.genre,
+          website: updated.website, codec: updated.codec,
+          bitrate: updated.bitrate, protocol: updated.protocol,
+        })
+        setEditing(false)
+      })
+      .catch((err) => toast.error(`Save failed: ${err.message}`))
+      .finally(() => setSaving(false))
+  }
+
+  const audioChanged = editing && (codec !== mount.codec || bitrate !== mount.bitrate || protocol !== mount.protocol)
+
+  const inputCls = "h-8 w-full bg-ink-950 border border-ink-800 rounded-md px-3 text-[12.5px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none font-mono"
 
   return (
     <div className="space-y-5">
@@ -139,19 +178,63 @@ function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying, history }: {
 
       {/* Metadata */}
       <div>
-        <SectionLabel>Metadata</SectionLabel>
-        <div className="space-y-1.5">
-          {[
-            ["Name", mount.name], ["Description", mount.description || "—"],
-            ["Genre", mount.genre || "—"], ["Website", mount.website || "—"],
-            ["Created", mount.created],
-          ].map(([k, v]) => (
-            <div key={k} className="flex justify-between text-[12px]">
-              <span className="text-ink-500">{k}</span>
-              <span className="text-ink-200 font-mono truncate max-w-[300px]">{v}</span>
-            </div>
-          ))}
+        <div className="flex items-center justify-between mb-1.5">
+          <SectionLabel>Metadata</SectionLabel>
+          {!editing ? (
+            <button
+              onClick={openEdit}
+              className="inline-flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-200 transition-colors font-mono"
+            >
+              <Pencil className="h-3 w-3" /> Edit
+            </button>
+          ) : (
+            <button
+              onClick={cancelEdit}
+              className="inline-flex items-center gap-1 text-[11px] text-ink-500 hover:text-ink-200 transition-colors font-mono"
+            >
+              <X className="h-3 w-3" /> Cancel
+            </button>
+          )}
         </div>
+
+        {editing ? (
+          <div className="space-y-2">
+            {/* Read-only rows */}
+            {[["Name", mount.name], ["Created", mount.created]].map(([k, v]) => (
+              <div key={k} className="flex justify-between text-[12px]">
+                <span className="text-ink-500">{k}</span>
+                <span className="text-ink-200 font-mono truncate max-w-[300px]">{v}</span>
+              </div>
+            ))}
+            <div className="pt-1 space-y-2">
+              <div className="space-y-1">
+                <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Description</p>
+                <input className={inputCls} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Station description" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Genre</p>
+                <input className={inputCls} value={genre} onChange={(e) => setGenre(e.target.value)} placeholder="e.g. Jazz, Electronic…" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Website</p>
+                <input className={inputCls} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {[
+              ["Name", mount.name], ["Description", mount.description || "—"],
+              ["Genre", mount.genre || "—"], ["Website", mount.website || "—"],
+              ["Created", mount.created],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between text-[12px]">
+                <span className="text-ink-500">{k}</span>
+                <span className="text-ink-200 font-mono truncate max-w-[300px]">{v}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="border-t border-ink-800" />
@@ -159,15 +242,74 @@ function MountInfoTab({ mount, nowPlaying, onRefreshNowPlaying, history }: {
       {/* Audio */}
       <div>
         <SectionLabel>Audio</SectionLabel>
-        <div className="space-y-1.5">
-          {[["Codec", mount.codec], ["Bitrate", mount.bitrate], ["Protocol", mount.protocol]].map(([k, v]) => (
-            <div key={k} className="flex justify-between text-[12px]">
-              <span className="text-ink-500">{k}</span>
-              <span className="text-ink-200 font-mono">{v}</span>
+        {editing ? (
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Codec</p>
+              <Select value={codec} onValueChange={setCodec}>
+                <SelectTrigger className="bg-ink-950 border-ink-800 text-ink-100 focus:ring-k-500/30 h-8 text-[12.5px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AAC">AAC</SelectItem>
+                  <SelectItem value="MP3">MP3</SelectItem>
+                  <SelectItem value="OPUS">OPUS</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          ))}
-        </div>
+            <div className="space-y-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Bitrate</p>
+              <Select value={bitrate} onValueChange={setBitrate}>
+                <SelectTrigger className="bg-ink-950 border-ink-800 text-ink-100 focus:ring-k-500/30 h-8 text-[12.5px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BITRATE_OPTIONS.map((b) => (
+                    <SelectItem key={b} value={b}>{b.replace("k", " kbps")}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-600 font-mono">Protocol</p>
+              <Select value={protocol} onValueChange={setProtocol}>
+                <SelectTrigger className="bg-ink-950 border-ink-800 text-ink-100 focus:ring-k-500/30 h-8 text-[12.5px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HLS">HLS</SelectItem>
+                  <SelectItem value="LL-HLS">LL-HLS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {audioChanged && (
+              <p className="flex items-center gap-1.5 text-[11px] text-amber-400/80 font-mono">
+                <TriangleAlert className="h-3 w-3 shrink-0" />
+                Codec, bitrate veya protocol değişirse AutoDJ yeniden başlar.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {[["Codec", mount.codec], ["Bitrate", mount.bitrate], ["Protocol", mount.protocol]].map(([k, v]) => (
+              <div key={k} className="flex justify-between text-[12px]">
+                <span className="text-ink-500">{k}</span>
+                <span className="text-ink-200 font-mono">{v}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {editing && (
+        <button
+          onClick={handleSave} disabled={saving}
+          className="w-full h-9 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 transition-colors rounded-md"
+        >
+          <Check className="h-3.5 w-3.5" />
+          {saving ? "Saving…" : "Save Changes"}
+        </button>
+      )}
 
       <div className="border-t border-ink-800" />
 
@@ -787,6 +929,7 @@ export default function MountDetailPage() {
                 nowPlaying={nowPlaying}
                 onRefreshNowPlaying={() => api.mounts.nowPlaying(mount.name).then(setNowPlaying).catch(() => {})}
                 history={history}
+                onUpdated={(patch) => setMount((m) => m ? { ...m, ...patch } : m)}
               />
             </TabsContent>
             <TabsContent value="autodj">

@@ -144,6 +144,37 @@ export default function OverviewPage() {
             )}
           </div>
         </div>
+        {/* CPU */}
+        <div className="bg-ink-950 px-5 py-4">
+          <div className="text-[11px] text-ink-500 font-mono uppercase tracking-wider">CPU</div>
+          <div className="mt-1.5 flex items-baseline gap-2">
+            <span className={cn(
+              "text-[22px] font-bold",
+              apiStatus?.cpu_percent != null && apiStatus.cpu_percent >= 0
+                ? apiStatus.cpu_percent < 50
+                  ? "text-emerald-400"
+                  : apiStatus.cpu_percent < 80
+                    ? "text-amber-400"
+                    : "text-red-400"
+                : "text-ink-100"
+            )}>
+              {apiStatus?.cpu_percent != null && apiStatus.cpu_percent >= 0
+                ? apiStatus.cpu_percent.toFixed(1) + "%"
+                : "—"}
+            </span>
+          </div>
+        </div>
+        {/* Memory */}
+        <div className="bg-ink-950 px-5 py-4">
+          <div className="text-[11px] text-ink-500 font-mono uppercase tracking-wider">Memory</div>
+          <div className="mt-1.5 flex items-baseline gap-2">
+            <span className="text-[22px] font-bold text-ink-100">
+              {apiStatus?.mem_rss_mb != null && apiStatus.mem_rss_mb >= 0
+                ? apiStatus.mem_rss_mb + " MB"
+                : "—"}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Mounts */}

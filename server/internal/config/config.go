@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -26,6 +27,11 @@ type ServerConfig struct {
 	HTTPAddr    string   `toml:"http_addr"`
 	PublicURL   string   `toml:"public_url"`
 	CORSOrigins []string `toml:"cors_origins"`
+	// TrustProxy enables reading the real client IP from the X-Forwarded-For
+	// header. Set to true when running behind a reverse proxy (nginx, Caddy,
+	// Traefik). Leave false for direct (non-proxied) deployments.
+	TrustProxy bool   `toml:"trust_proxy"`
+	Timezone   string `toml:"timezone"`
 }
 
 type AdminConfig struct {
@@ -94,6 +100,12 @@ func (c *Config) validate() error {
 	}
 	if c.Server.HTTPAddr == "" {
 		c.Server.HTTPAddr = ":8080"
+	}
+	if c.Server.Timezone == "" {
+		c.Server.Timezone = "UTC"
+	}
+	if _, err := time.LoadLocation(c.Server.Timezone); err != nil {
+		errs = append(errs, fmt.Sprintf("server.timezone %q is not a valid IANA timezone", c.Server.Timezone))
 	}
 	if c.Server.PublicURL == "" {
 		errs = append(errs, "server.public_url must not be empty")

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gofiber/fiber/v2"
@@ -23,6 +24,7 @@ type SettingsBody struct {
 	PublicURL          string   `json:"public_url"`
 	HTTPAddr           string   `json:"http_addr"`
 	CORSOrigins        []string `json:"cors_origins"`
+	TrustProxy         bool     `json:"trust_proxy"`
 	SSLEnabled         bool     `json:"ssl_enabled"`
 	SSLAutoCert        bool     `json:"ssl_auto_cert"`
 	SSLDomains         []string `json:"ssl_domains"`
@@ -32,6 +34,7 @@ type SettingsBody struct {
 	HLSPlaylistSize    int      `json:"hls_playlist_size"`
 	LogLevel           string   `json:"log_level"`
 	LogFormat          string   `json:"log_format"`
+	Timezone           string   `json:"timezone"`
 }
 
 func (h *Settings) toBody() SettingsBody {
@@ -39,6 +42,7 @@ func (h *Settings) toBody() SettingsBody {
 		PublicURL:          h.Cfg.Server.PublicURL,
 		HTTPAddr:           h.Cfg.Server.HTTPAddr,
 		CORSOrigins:        h.Cfg.Server.CORSOrigins,
+		TrustProxy:         h.Cfg.Server.TrustProxy,
 		SSLEnabled:         h.Cfg.SSL.Enabled,
 		SSLAutoCert:        h.Cfg.SSL.AutoCert,
 		SSLDomains:         h.Cfg.SSL.Domains,
@@ -48,6 +52,7 @@ func (h *Settings) toBody() SettingsBody {
 		HLSPlaylistSize:    h.Cfg.HLS.PlaylistSize,
 		LogLevel:           h.Cfg.Log.Level,
 		LogFormat:          h.Cfg.Log.Format,
+		Timezone:           h.Cfg.Server.Timezone,
 	}
 }
 
@@ -82,6 +87,12 @@ func (h *Settings) Update(c *fiber.Ctx) error {
 	if body.HLSPlaylistSize <= 0 {
 		return respond.Error(c, fiber.StatusBadRequest, "hls_playlist_size must be > 0")
 	}
+	if body.Timezone == "" {
+		body.Timezone = "UTC"
+	}
+	if _, err := time.LoadLocation(body.Timezone); err != nil {
+		return respond.Error(c, fiber.StatusBadRequest, "timezone must be a valid IANA timezone (e.g. UTC, Europe/Istanbul)")
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -93,6 +104,8 @@ func (h *Settings) Update(c *fiber.Ctx) error {
 	if body.CORSOrigins != nil {
 		h.Cfg.Server.CORSOrigins = body.CORSOrigins
 	}
+	h.Cfg.Server.TrustProxy = body.TrustProxy
+	h.Cfg.Server.Timezone = body.Timezone
 	h.Cfg.SSL.Enabled = body.SSLEnabled
 	h.Cfg.SSL.AutoCert = body.SSLAutoCert
 	if body.SSLDomains != nil {

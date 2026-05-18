@@ -326,6 +326,69 @@ function Controls({ playing, togglePlay, volume, setVolume, muted, setMuted, acc
   )
 }
 
+// ── Marquee title ─────────────────────────────────────────────────────────
+
+const MARQUEE_GAP = 80 // px between the two copies
+
+function MarqueeTitle({ text }: { text: string }) {
+  const containerRef = React.useRef<HTMLSpanElement>(null)
+  const measureRef   = React.useRef<HTMLSpanElement>(null)
+  const [dist, setDist] = React.useState(0)
+  const [dur,  setDur]  = React.useState(10)
+
+  React.useLayoutEffect(() => {
+    const check = () => {
+      const c = containerRef.current, m = measureRef.current
+      if (!c || !m) return
+      const tw = m.offsetWidth
+      const cw = c.clientWidth
+      if (tw > cw) {
+        const d = tw + MARQUEE_GAP
+        setDist(d)
+        setDur(Math.max(5, d / 55))
+      } else {
+        setDist(0)
+      }
+    }
+    check()
+    const ro = new ResizeObserver(check)
+    if (containerRef.current) ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [text])
+
+  return (
+    <span ref={containerRef} style={{ display: "block", overflow: "hidden", position: "relative" }}>
+      {/* invisible probe — always measures natural text width */}
+      <span
+        ref={measureRef}
+        aria-hidden
+        style={{ position: "absolute", whiteSpace: "nowrap", visibility: "hidden", pointerEvents: "none" }}
+      >
+        {text}
+      </span>
+
+      {dist > 0 ? (
+        <span
+          style={{
+            display: "inline-block",
+            whiteSpace: "nowrap",
+            animationName: "kp-marquee",
+            animationDuration: `${dur}s`,
+            animationTimingFunction: "linear",
+            animationIterationCount: "infinite",
+            "--kp-marquee-dist": `-${dist}px`,
+          } as React.CSSProperties}
+        >
+          {text}
+          <span style={{ paddingLeft: `${MARQUEE_GAP}px` }}>{text}</span>
+        </span>
+      ) : (
+        <span>{text}</span>
+      )}
+    </span>
+  )
+}
+
 // ── Section head ───────────────────────────────────────────────────────────
 
 function SectionHead({ label }: { label: string }) {
@@ -480,6 +543,7 @@ const PLAYER_CSS = `
   @keyframes kp-eq-5 { 0%,100%{height:40%}50%{height:85%} }
   @keyframes kp-vinyl-spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
   @keyframes kp-toast-in { from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes kp-marquee { 0%,18%{transform:translateX(0)} 100%{transform:translateX(var(--kp-marquee-dist,0px))} }
   .kp-slider{-webkit-appearance:none;appearance:none;height:4px;cursor:pointer}
   .kp-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;background:var(--pl-fg);border:0;cursor:pointer}
   .kp-slider::-moz-range-thumb{width:12px;height:12px;background:var(--pl-fg);border:0;cursor:pointer}
@@ -729,16 +793,13 @@ export default function ListenPage({
                 </div>
 
                 {/* Right */}
-                <div className="flex flex-col">
+                <div className="flex flex-col min-w-0">
                   {isLive
                     ? <LiveStrip listeners={station?.listeners ?? 0} bitrate={station?.bitrate || "128k"} codec={station?.codec || "AAC"} playing={playing} accent={accent} />
                     : <OfflineStrip />
                   }
-                  <h1
-                    className="mt-6 font-serif text-[56px] md:text-[72px] leading-[0.95] tracking-tight"
-                    style={{ textWrap: "balance" } as React.CSSProperties}
-                  >
-                    {np?.title || stationName}
+                  <h1 className="mt-6 font-serif text-[56px] md:text-[72px] leading-[0.95] tracking-tight overflow-hidden min-w-0">
+                    <MarqueeTitle text={np?.title || stationName} />
                   </h1>
                   {np && (
                     <div className="mt-4 flex items-center gap-3 flex-wrap">
@@ -783,11 +844,8 @@ export default function ListenPage({
                     size={360}
                   />
                 </div>
-                <h1
-                  className="mt-8 font-serif text-[48px] md:text-[64px] leading-[0.95] tracking-tight"
-                  style={{ textWrap: "balance" } as React.CSSProperties}
-                >
-                  {np?.title || stationName}
+                <h1 className="mt-8 font-serif text-[48px] md:text-[64px] leading-[0.95] tracking-tight overflow-hidden min-w-0 w-full">
+                  <MarqueeTitle text={np?.title || stationName} />
                 </h1>
                 {np && (
                   <div className="mt-3 font-mono text-[13px] uppercase tracking-wider" style={{ color: "var(--pl-fg-2)" }}>

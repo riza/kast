@@ -47,15 +47,16 @@ func (s *Segmenter) MountDir(mountName string) string {
 // 127.0.0.1:{rtpPort}, used by the WebRTC WHEP server. Pass 0 to
 // disable the RTP output (e.g. when WebRTC is not configured).
 //
+// codec must be one of AAC, MP3, OPUS. bitrate must be in NNNk format
+// (e.g. "128k"). Both control the ffmpeg encoding pipeline.
+//
 // The caller is responsible for piping audio data into cmd.Stdin and
 // for calling cmd.Wait() after the pipeline ends.
-func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool, rtpPort int) (*exec.Cmd, error) {
+func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool, rtpPort int, codec string, bitrate string) (*exec.Cmd, error) {
 	dir := s.MountDir(mountName)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("hls: mkdir %q: %w", dir, err)
 	}
-
-	playlist := filepath.Join(dir, "index.m3u8")
 
 	// Base args: input from stdin.
 	args := []string{
@@ -66,60 +67,116 @@ func (s *Segmenter) StartMount(ctx context.Context, mountName string, llhls bool
 	}
 
 	// HLS output (always present).
-	if llhls {
-		segPattern := filepath.Join(dir, "seg%05d.m4s")
-		args = append(args,
-			"-map", "0:a",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-ar", "44100",
-			"-f", "hls",
-			"-hls_time", strconv.Itoa(s.segmentDuration),
-			"-hls_list_size", strconv.Itoa(s.playlistSize),
-			"-hls_segment_type", "fmp4",
-			"-hls_flags", "delete_segments+append_list",
-			"-hls_fmp4_init_filename", "init.mp4",
-			"-hls_segment_filename", segPattern,
-			playlist,
-		)
-	} else {
-		segPattern := filepath.Join(dir, "seg%05d.ts")
-		args = append(args,
-			"-map", "0:a",
-			"-c:a", "aac",
-			"-b:a", "128k",
-			"-ar", "44100",
-			"-f", "hls",
-			"-hls_time", strconv.Itoa(s.segmentDuration),
-			"-hls_list_size", strconv.Itoa(s.playlistSize),
-			"-hls_flags", "delete_segments+append_list",
-			"-hls_segment_filename", segPattern,
-			playlist,
-		)
-	}
+	args = append(args, hlsOutputArgs(dir, codec, bitrate, llhls, s.segmentDuration, s.playlistSize)...)
 
-	// Optional WebRTC/WHEP RTP output (Opus, 48 kHz stereo, payload type 111).
+	// Optional WebRTC/WHEP RTP output (always Opus, 48 kHz stereo, payload type 111).
 	if rtpPort > 0 {
-		rtpURL := fmt.Sprintf("rtp://127.0.0.1:%d", rtpPort)
-		args = append(args,
-			"-map", "0:a",
-			"-c:a", "libopus",
-			"-b:a", "96k",
-			"-ar", "48000",
-			"-ac", "2",
-			"-application", "lowdelay",
-			"-payload_type", "111",
-			"-f", "rtp",
-			rtpURL,
-		)
+		args = append(args, rtpOutputArgs(rtpPort, bitrate)...)
 	}
 
 	// #nosec G204
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stderr = os.Stderr
 
-	slog.Info("hls: starting segmenter", "mount", mountName, "ll_hls", llhls, "rtp_port", rtpPort, "dir", dir)
+	slog.Info("hls: starting segmenter", "mount", mountName, "ll_hls", llhls, "rtp_port", rtpPort, "codec", codec, "bitrate", bitrate, "dir", dir)
 	return cmd, nil
+}
+
+// hlsOutputArgs returns ffmpeg args for the HLS output, selecting the
+// encoder and segment format based on the requested codec.
+func hlsOutputArgs(dir, codec, bitrate string, llhls bool, segDuration, playlistSize int) []string {
+	switch codec {
+	case "MP3":
+		return mp3HLSOutput(dir, bitrate, segDuration, playlistSize)
+	case "OPUS":
+		return opusHLSOutput(dir, bitrate, segDuration, playlistSize)
+	default: // AAC
+		return aacHLSOutput(dir, bitrate, llhls, segDuration, playlistSize)
+	}
+}
+
+func aacHLSOutput(dir, bitrate string, llhls bool, segDuration, playlistSize int) []string {
+	playlist := filepath.Join(dir, "index.m3u8")
+	if llhls {
+		segPattern := filepath.Join(dir, "seg%05d.m4s")
+		return append([]string{
+			"-map", "0:a",
+			"-c:a", "aac",
+			"-b:a", bitrate,
+			"-ar", "44100",
+			"-f", "hls",
+			"-hls_time", strconv.Itoa(segDuration),
+			"-hls_list_size", strconv.Itoa(playlistSize),
+			"-hls_segment_type", "fmp4",
+			"-hls_flags", "delete_segments+append_list",
+			"-hls_fmp4_init_filename", "init.mp4",
+			"-hls_segment_filename", segPattern,
+		}, playlist)
+	}
+	segPattern := filepath.Join(dir, "seg%05d.ts")
+	return append([]string{
+		"-map", "0:a",
+		"-c:a", "aac",
+		"-b:a", bitrate,
+		"-ar", "44100",
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(segDuration),
+		"-hls_list_size", strconv.Itoa(playlistSize),
+		"-hls_flags", "delete_segments+append_list",
+		"-hls_segment_filename", segPattern,
+	}, playlist)
+}
+
+func mp3HLSOutput(dir, bitrate string, segDuration, playlistSize int) []string {
+	playlist := filepath.Join(dir, "index.m3u8")
+	segPattern := filepath.Join(dir, "seg%05d.ts") // MP3 requires MPEG-TS; fMP4 containers reject it
+	return append([]string{
+		"-map", "0:a",
+		"-c:a", "libmp3lame",
+		"-b:a", bitrate,
+		"-ar", "44100",
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(segDuration),
+		"-hls_list_size", strconv.Itoa(playlistSize),
+		"-hls_flags", "delete_segments+append_list",
+		"-hls_segment_filename", segPattern,
+	}, playlist)
+}
+
+func opusHLSOutput(dir, bitrate string, segDuration, playlistSize int) []string {
+	playlist := filepath.Join(dir, "index.m3u8")
+	segPattern := filepath.Join(dir, "seg%05d.m4s")
+	return append([]string{
+		"-map", "0:a",
+		"-c:a", "libopus",
+		"-b:a", bitrate,
+		"-ar", "48000",
+		"-f", "hls",
+		"-hls_time", strconv.Itoa(segDuration),
+		"-hls_list_size", strconv.Itoa(playlistSize),
+		"-hls_segment_type", "fmp4",
+		"-hls_flags", "delete_segments+append_list",
+		"-hls_fmp4_init_filename", "init.mp4",
+		"-hls_segment_filename", segPattern,
+	}, playlist)
+}
+
+// rtpOutputArgs returns ffmpeg args for the optional RTP output.
+// WebRTC requires Opus, so the codec is always libopus regardless of
+// the mount's HLS codec. The bitrate is taken from the mount config.
+func rtpOutputArgs(rtpPort int, bitrate string) []string {
+	rtpURL := fmt.Sprintf("rtp://127.0.0.1:%d", rtpPort)
+	return []string{
+		"-map", "0:a",
+		"-c:a", "libopus",
+		"-b:a", bitrate,
+		"-ar", "48000",
+		"-ac", "2",
+		"-application", "lowdelay",
+		"-payload_type", "111",
+		"-f", "rtp",
+		rtpURL,
+	}
 }
 
 // PlaylistPath returns the absolute path to the .m3u8 file for a mount.
