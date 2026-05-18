@@ -55,11 +55,9 @@ graph TB
 
 ## Quick Start
 
-### Docker Compose (recommended)
-
 ```bash
 git clone https://github.com/riza/kast.git
-cd kast
+cd kast && cp .env.example .env
 docker compose up -d
 ```
 
@@ -71,15 +69,25 @@ docker compose logs server | grep "Generated API key"
 
 Enter that key in **Dashboard → Settings → Connection**.
 
-### Manual Setup
+### Production Builds
+
+For reproducible, versioned images use the Makefile targets:
+
+```bash
+make docker-build    # build images with git tag, commit hash, and timestamp baked in
+make docker-up       # start the stack
+```
+
+The Makefile injects build metadata (`VERSION`, `GIT_COMMIT`, `BUILD_TIME`) into the Go binary via linker flags, which appears in logs and the `/api/status` response. This is useful for debugging which commit is running in production.
+
+### Manual Setup (dev)
 
 **Prerequisites:** Go 1.25+, Node.js 22+, ffmpeg
 
 ```bash
 # Server
 cd server
-go build -o kast ./cmd/kast
-./kast -config kast.toml
+go run ./cmd/kast -config kast.toml
 
 # Dashboard (separate terminal)
 cd dashboard
