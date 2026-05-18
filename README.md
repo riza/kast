@@ -114,23 +114,14 @@ Kast is configured via a single TOML file (`server/kast.toml`). The Docker entry
 
 Three deployment models are supported:
 
-```mermaid
-graph LR
-    subgraph cf["Option A · Cloudflare  ★ recommended"]
-        U1["Visitor"] -- HTTPS --> CF["Cloudflare<br/>Full Strict"]
-        CF -- "HTTPS :443<br/>Origin Certificate" --> K1["Kast"]
-    end
-
-    subgraph le["Option B · Direct + Let's Encrypt"]
-        I2["Internet"] -- "HTTPS :443" --> K2["Kast<br/>auto_cert = true"]
-        K2 <-.-> LE["Let's Encrypt"]
-    end
-
-    subgraph rp["Option C · Reverse Proxy"]
-        I3["Internet"] -- "HTTPS :443" --> RP["nginx / Caddy"]
-        RP -- "HTTP :8080" --> K3["Kast<br/>trust_proxy = true"]
-    end
-```
+| | Option A · Cloudflare ★ | Option B · Let's Encrypt | Option C · Reverse Proxy |
+|---|---|---|---|
+| **TLS handled by** | Cloudflare edge | Kast (ACME auto-cert) | nginx / Caddy / Traefik |
+| **Certificate** | Cloudflare Origin Cert (free, 15 yr) | Let's Encrypt (auto-renewed) | Your own / Caddy auto |
+| **Port 443 open?** | Yes (Cloudflare → origin) | Yes (internet → origin) | Yes (internet → proxy) |
+| **Setup effort** | Minimal | Minimal | Moderate |
+| **`trust_proxy`** | `true` | `false` | `true` |
+| **Best for** | Cloudflare-managed domains | VPS with direct internet access | Existing proxy infrastructure |
 
 ---
 
