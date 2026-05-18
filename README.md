@@ -311,16 +311,16 @@ kast/
 
 ## Roadmap
 
-- [ ] Crossfade between tracks
-- [ ] Live source → HLS pipeline (connect incoming audio to segmenter)
-- [ ] Scheduled playlists (time-based rotation)
+- [x] Crossfade between tracks
+- [x] Live source → HLS pipeline (connect incoming audio to segmenter)
+- [x] Scheduled playlists (time-based rotation)
 - [ ] Jingle/ad insertion (every N songs or N minutes)
-- [ ] Webhooks (track change, listener connect/disconnect)
-- [ ] Metadata editing
+- [x] Webhooks (track change, listener count change, schedule events)
+- [ ] Track metadata editing (artist/title/tags — mount-level metadata already supported)
 - [ ] Song request system (listeners request tracks via public API)
-- [ ] Listener analytics history
-- [ ] Web DJ (browser-based live broadcasting via WebRTC)
-- [ ] Low-Latency HLS (LL-HLS) support
+- [ ] Listener analytics history (persistent time-series — current counts already live)
+- [ ] Web DJ — browser-based live broadcasting via WHIP ingress (WHEP egress already supported)
+- [x] Low-Latency HLS (LL-HLS) support
 
 ## Contributing
 
