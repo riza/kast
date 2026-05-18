@@ -24,7 +24,7 @@ FROM alpine:3.21
 
 # ffmpeg for audio processing; yt-dlp from PyPI (Alpine package is too old for YouTube).
 # nodejs provides the JavaScript runtime yt-dlp now requires for YouTube extraction.
-RUN apk add --no-cache ffmpeg ca-certificates python3 py3-pip nodejs && \
+RUN apk add --no-cache ffmpeg ca-certificates python3 py3-pip nodejs su-exec && \
     pip3 install --break-system-packages --no-cache-dir yt-dlp
 
 # Create kast user but stay as root for now — data dirs must be created
@@ -43,15 +43,15 @@ RUN mkdir -p /home/kast/.config/yt-dlp && \
     chown -R kast:kast /home/kast/.config
 
 # Create data and config directories as root so Docker volumes get the right
-# base ownership. chmod 777 keeps them writable regardless of the uid that
-# ends up running the container.
+# base ownership. chown + chmod 777 keeps them writable regardless of the uid
+# that ends up running the container (named volumes copy image ownership).
 RUN chmod +x /app/entrypoint.sh && \
     mkdir -p config data/music data/hls data/mounts data/playlists && \
-    chmod 777 data/music data/hls data/mounts data/playlists
+    chown -R kast:kast config data && \
+    chmod -R 777 config data
 
-# Drop to non-root user for runtime.
-USER kast
-
+# Drop to non-root user for runtime (entrypoint switches via su-exec after
+# fixing permissions on volumes).
 EXPOSE 8080 443
 
 ENTRYPOINT ["/app/entrypoint.sh"]

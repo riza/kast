@@ -4,18 +4,13 @@ set -e
 CONFIG=/app/config/kast.toml
 
 # ── Ensure data directories exist and are writable ─────────────────────────
-# Named volumes created by Docker get the base image permissions (777), but
-# bind mounts (docker-compose) inherit the host's ownership. Attempt to fix
-# permissions and warn if a directory is still not writable.
-for d in data/music data/hls data/mounts data/playlists; do
+# Running as root at this point; chown to kast so named volumes (which copy
+# image ownership on first creation) are always usable. chmod 777 keeps
+# bind-mounted host directories writable regardless of host uid mismatch.
+for d in config data/music data/hls data/mounts data/playlists; do
     mkdir -p "/app/$d" 2>/dev/null || true
-    chmod 777 "/app/$d" 2>/dev/null || true
-    if [ ! -w "/app/$d" ]; then
-        echo "[kast] WARNING: /app/$d is not writable!"
-        echo "[kast]   If you are using bind mounts, run on the host:"
-        echo "[kast]     chmod 777 $(pwd)/$d"
-        echo "[kast]   or match the container uid (1001) to the host directory owner."
-    fi
+    chown -R kast:kast "/app/$d" 2>/dev/null || true
+    chmod -R 777 "/app/$d" 2>/dev/null || true
 done
 
 # Create config from example on first run
@@ -65,4 +60,5 @@ if [ -n "$KAST_CORS_ORIGINS" ]; then
     sed -i "s|^cors_origins = \[.*\]|cors_origins = [\"${KAST_CORS_ORIGINS}\"]|" "$CONFIG"
 fi
 
-exec "$@"
+# Drop to non-root user and start the server.
+exec su-exec kast:1001 "$@"
