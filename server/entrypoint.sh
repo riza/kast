@@ -7,7 +7,7 @@ CONFIG=/app/config/kast.toml
 # Running as root at this point; chown to kast so named volumes (which copy
 # image ownership on first creation) are always usable. chmod 777 keeps
 # bind-mounted host directories writable regardless of host uid mismatch.
-for d in config data/music data/hls data/mounts data/playlists; do
+for d in config data data/music data/hls data/mounts data/playlists; do
     mkdir -p "/app/$d" 2>/dev/null || true
     chown -R kast:kast "/app/$d" 2>/dev/null || true
     chmod -R 777 "/app/$d" 2>/dev/null || true
