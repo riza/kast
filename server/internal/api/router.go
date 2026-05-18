@@ -203,8 +203,14 @@ func NewApp(
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
 			}
-			count := listenerTrack.touch("/"+mountName, ip, c.Get("User-Agent"))
-			mounts.SetListeners("/"+mountName, count)
+			// With TrustProxy on, c.IP() returns whatever's in the first
+			// X-Forwarded-For segment — scanners and bad proxies inject
+			// non-IP junk (JSON fragments, scheme strings, country codes).
+			// Skip the bookkeeping when the value isn't a real IP.
+			if net.ParseIP(ip) != nil {
+				count := listenerTrack.touch("/"+mountName, ip, c.Get("User-Agent"))
+				mounts.SetListeners("/"+mountName, count)
+			}
 		}
 		fullPath := filepath.Join(dir, filepath.Clean("/"+filePath))
 
