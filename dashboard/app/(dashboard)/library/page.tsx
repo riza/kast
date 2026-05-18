@@ -380,7 +380,7 @@ function YouTubeImportModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+      <DialogContent className={`${step === "preview" && preview?.type === "playlist" ? "max-w-3xl" : "max-w-2xl"} max-h-[80vh] flex flex-col`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <YtIcon className="h-5 w-5 text-red-500" />
@@ -438,7 +438,7 @@ function YouTubeImportModal({
                 </label>
               </div>
             )}
-            <div className="overflow-y-auto rounded-md border divide-y">
+            <div className="overflow-y-auto rounded-md border divide-y max-h-[50vh]">
               {preview.items.map((item) => (
                 <div key={item.ytid} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50">
                   {preview.type === "playlist" && (
@@ -589,20 +589,22 @@ function JobStatusIcon({ status }: { status: string }) {
   return <Clock className="h-4 w-4 text-muted-foreground" />
 }
 
-function ActiveJobs({ jobIds, onAllDone }: { jobIds: string[]; onAllDone: () => void }) {
+function ActiveJobs({ onAllDone }: { onAllDone: () => void }) {
   const [jobs, setJobs] = React.useState<APIImportJob[]>([])
+  const hadJobsRef = React.useRef(false)
 
   React.useEffect(() => {
-    if (jobIds.length === 0) return
-
     const poll = async () => {
       try {
         const all = await api.library.importJobs()
-        const relevant = all.filter((j) => jobIds.includes(j.id))
-        setJobs(relevant)
-        const allDone = relevant.every((j) => j.status === "done" || j.status === "error")
-        if (allDone && relevant.length > 0) {
+        const active = all.filter((j) => j.status === "downloading" || j.status === "pending")
+        setJobs(active)
+
+        if (active.length === 0 && hadJobsRef.current) {
+          hadJobsRef.current = false
           onAllDone()
+        } else if (active.length > 0) {
+          hadJobsRef.current = true
         }
       } catch {
         // ignore poll errors
@@ -612,16 +614,13 @@ function ActiveJobs({ jobIds, onAllDone }: { jobIds: string[]; onAllDone: () => 
     poll()
     const timer = setInterval(poll, 1500)
     return () => clearInterval(timer)
-  }, [jobIds, onAllDone])
+  }, [onAllDone])
 
   if (jobs.length === 0) return null
 
-  const activeJobs = jobs.filter((j) => j.status === "downloading")
-  if (activeJobs.length === 0) return null
-
   return (
     <div className="space-y-2">
-      {activeJobs.map((job) => (
+      {jobs.map((job) => (
         <Card key={job.id} className="border-primary/20 bg-primary/5">
           <CardContent className="p-3 space-y-2">
             {job.items.map((item) => (
@@ -659,7 +658,6 @@ export default function LibraryPage() {
   const [editTrack, setEditTrack]     = React.useState<Track | null>(null)
   const [ytOpen, setYtOpen]             = React.useState(false)
   const [uploadOpen, setUploadOpen]     = React.useState(false)
-  const [activeJobIds, setActiveJobIds] = React.useState<string[]>([])
 
   const genres = React.useMemo(
     () => [...new Set(tracks.map((t) => t.genre))].filter(Boolean).sort(),
@@ -692,15 +690,13 @@ export default function LibraryPage() {
       })
   }
 
-  const handleImportStarted = (jobId: string) => {
-    setActiveJobIds((prev) => [...prev, jobId])
+  const handleImportStarted = () => {
+    // ActiveJobs polls automatically — no need to track job IDs manually
   }
 
   const handleAllJobsDone = React.useCallback(() => {
-    // Reload library after all downloads finish.
     setTimeout(() => {
       loadTracks()
-      setActiveJobIds([])
     }, 1500)
   }, [loadTracks])
 
@@ -757,7 +753,7 @@ export default function LibraryPage() {
       </div>
 
       {/* Active download jobs */}
-      <ActiveJobs jobIds={activeJobIds} onAllDone={handleAllJobsDone} />
+      <ActiveJobs onAllDone={handleAllJobsDone} />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">

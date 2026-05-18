@@ -254,11 +254,23 @@ func copyJob(j *Job) *Job {
 var progressRe = regexp.MustCompile(`\[download\]\s+(\d+(?:\.\d+)?)%`)
 
 func (m *Manager) runJob(job *Job) {
+	const maxConcurrent = 3
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
 	for _, item := range job.Items {
-		if err := m.downloadItem(job, item); err != nil {
-			slog.Error("ytimport: download error", "ytid", item.YTID, "title", item.Title, "err", err)
-		}
+		wg.Add(1)
+		go func(it *Item) {
+			defer wg.Done()
+			sem <- struct{}{}        // acquire slot
+			defer func() { <-sem }() // release slot
+			if err := m.downloadItem(job, it); err != nil {
+				slog.Error("ytimport: download error", "ytid", it.YTID, "title", it.Title, "err", err)
+			}
+		}(item)
 	}
+
+	wg.Wait()
 
 	m.mu.Lock()
 	allOK := true
