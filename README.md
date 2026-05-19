@@ -118,13 +118,15 @@ Kast is configured via a single TOML file (`server/kast.toml`). The Docker entry
 | `[ssl]` | `enabled`, `auto_cert`, `domains`, `cert_file`, `key_file` |
 | `[log]` | `level` (debug/info/warn/error), `format` (text/json) |
 
-## Production Deployment
+## Documentation
 
-Three options are supported: **Cloudflare + Origin Cert** (recommended), **Let's Encrypt** (direct ACME), and **Reverse Proxy** (nginx / Caddy). See [docs/deployment.md](docs/deployment.md) for step-by-step instructions.
-
-## API Reference
-
-Full endpoint listing — mounts, AutoDJ, library, playlists, schedules, webhooks, API keys, and public endpoints — in [docs/api-reference.md](docs/api-reference.md).
+| Guide | Description |
+|-------|-------------|
+| [API Reference](docs/api-reference.md) | All endpoints with request / response schemas |
+| [Deployment](docs/deployment.md) | Cloudflare, Let's Encrypt, reverse proxy — step by step |
+| [Webhooks](docs/webhooks.md) | Event types, payload schemas, signature verification |
+| [Scheduled Playlists](docs/scheduled-playlists.md) | Time-based AutoDJ rotation |
+| [Jingle Insertion](docs/jingle-insertion.md) | Per-mount ad / jingle scheduling |
 
 ## Project Structure
 
@@ -161,9 +163,9 @@ kast/
 - [x] Jingle/ad insertion — [docs](docs/jingle-insertion.md)
 - [x] Webhooks — [docs](docs/webhooks.md)
 - [ ] Track metadata editing (artist/title/tags — mount-level metadata already supported)
-- [ ] Song request system — [spec](docs/song-requests.md)
-- [ ] Listener analytics history — [spec](docs/listener-analytics.md)
-- [ ] Web DJ / WHIP ingress — [spec](docs/web-dj.md)
+- [ ] Song request system (listeners request tracks via public API)
+- [ ] Listener analytics history (persistent time-series — current counts already live)
+- [ ] Web DJ / WHIP ingress (WHEP egress already supported)
 - [x] Low-Latency HLS (LL-HLS) support
 
 ## Contributing
