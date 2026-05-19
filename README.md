@@ -321,13 +321,13 @@ kast/
 
 - [x] Crossfade between tracks
 - [x] Live source → HLS pipeline (connect incoming audio to segmenter)
-- [x] Scheduled playlists (time-based rotation)
-- [ ] Jingle/ad insertion (every N songs or N minutes)
-- [x] Webhooks (track change, listener count change, schedule events)
+- [x] Scheduled playlists — [docs](docs/scheduled-playlists.md)
+- [x] Jingle/ad insertion — [docs](docs/jingle-insertion.md)
+- [x] Webhooks — [docs](docs/webhooks.md)
 - [ ] Track metadata editing (artist/title/tags — mount-level metadata already supported)
-- [ ] Song request system (listeners request tracks via public API)
-- [ ] Listener analytics history (persistent time-series — current counts already live)
-- [ ] Web DJ — browser-based live broadcasting via WHIP ingress (WHEP egress already supported)
+- [ ] Song request system — [spec](docs/song-requests.md)
+- [ ] Listener analytics history — [spec](docs/listener-analytics.md)
+- [ ] Web DJ / WHIP ingress — [spec](docs/web-dj.md)
 - [x] Low-Latency HLS (LL-HLS) support
 
 ## Contributing
