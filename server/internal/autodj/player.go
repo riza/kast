@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/riza/kast/internal/library"
 )
@@ -24,6 +25,21 @@ const (
 	ModeSequential Mode = "sequential"
 	ModeShuffle    Mode = "shuffle"
 )
+
+// JingleConfig describes the optional jingle/ad insertion rule for a Player.
+// Both intervals are independent: either, both, or neither may be set.
+// When both are set, whichever predicate fires first inserts a jingle and
+// resets both counters.
+type JingleConfig struct {
+	Tracks       []*library.Track // pool to pick from; empty disables insertion
+	EveryTracks  int              // 0 = disabled
+	EveryMinutes int              // 0 = disabled
+}
+
+// Enabled reports whether any jingle insertion is configured.
+func (j JingleConfig) Enabled() bool {
+	return len(j.Tracks) > 0 && (j.EveryTracks > 0 || j.EveryMinutes > 0)
+}
 
 // Player manages AutoDJ playback for one mount.
 type Player struct {
@@ -37,20 +53,29 @@ type Player struct {
 	running      bool
 	nowPlaying   atomic.Pointer[library.Track]
 	onTrackStart func(*library.Track) // called each time a new track begins
+	onJingleStart func(*library.Track) // called when a jingle/ad is selected
 	// skipMu guards currentCmd so Skip() can kill it without holding mu.
 	skipMu     sync.Mutex
 	currentCmd *exec.Cmd
+
+	// Jingle insertion state. Guarded by mu (or via nextTrack's lock).
+	jingle            JingleConfig
+	tracksSinceJingle int
+	lastJingleAt      time.Time
+	jingleNext        int // sequential cursor into jingle.Tracks for variety
 }
 
 // NewPlayer creates a Player with the given track list and mode.
 // startFromPath, if non-empty, sets the playback position to the track
 // after the one matching that path (resume after restart).
+// Jingle insertion is disabled by default; call SetJingles to enable.
 func NewPlayer(tracks []*library.Track, mode Mode, crossfadeMs int, startFromPath string, onTrackStart func(*library.Track)) *Player {
 	p := &Player{
 		tracks:       tracks,
 		mode:         mode,
 		crossfadeMs:  crossfadeMs,
 		onTrackStart: onTrackStart,
+		lastJingleAt: time.Now(),
 	}
 	if mode == ModeShuffle {
 		p.shuffle()
@@ -65,6 +90,22 @@ func NewPlayer(tracks []*library.Track, mode Mode, crossfadeMs int, startFromPat
 		}
 	}
 	return p
+}
+
+// SetJingles configures jingle/ad insertion. Call before Start(); calling
+// while running has no effect on the currently-encoding track. Pass an empty
+// JingleConfig{} to disable.
+func (p *Player) SetJingles(cfg JingleConfig, onJingleStart func(*library.Track)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.jingle = cfg
+	p.onJingleStart = onJingleStart
+	p.tracksSinceJingle = 0
+	p.lastJingleAt = time.Now()
+	p.jingleNext = 0
+	if cfg.Enabled() && len(cfg.Tracks) > 1 {
+		p.jingleNext = rand.IntN(len(cfg.Tracks))
+	}
 }
 
 // Start begins playback, piping audio through ffmpegPipe into the HLS segmenter.
@@ -135,15 +176,18 @@ func (p *Player) loop(ctx context.Context, out io.WriteCloser) {
 		if ctx.Err() != nil {
 			return
 		}
-		track := p.nextTrack()
+		track, isJingle := p.nextTrack()
 		if track == nil {
 			slog.Info("autodj: no tracks, stopping")
 			return
 		}
 		p.nowPlaying.Store(track)
-		slog.Info("autodj: playing", "title", track.Title, "artist", track.Artist)
+		slog.Info("autodj: playing", "title", track.Title, "artist", track.Artist, "jingle", isJingle)
 		if p.onTrackStart != nil {
 			p.onTrackStart(track)
+		}
+		if isJingle && p.onJingleStart != nil {
+			p.onJingleStart(track)
 		}
 		if err := p.playTrack(ctx, track, out); err != nil {
 			if ctx.Err() != nil {
@@ -236,23 +280,62 @@ func (p *Player) Tracks() (tracks []*library.Track, nowPlayingID string, queue [
 	return
 }
 
-func (p *Player) nextTrack() *library.Track {
+// nextTrack returns the next track to play. Returns (track, isJingle).
+// Selection priority:
+//  1. One-shot queue (manual InsertNext) — counts toward jingle cadence
+//  2. Jingle insertion if cadence predicate trips
+//  3. Main playlist advance
+func (p *Player) nextTrack() (*library.Track, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if len(p.tracks) == 0 {
-		return nil
+		return nil, false
 	}
+	// 1. One-shot queue — manual inserts always win for predictability.
 	if len(p.queue) > 0 {
 		t := p.queue[0]
 		p.queue = p.queue[1:]
-		return t
+		p.tracksSinceJingle++
+		return t, false
 	}
+	// 2. Jingle cadence.
+	if p.shouldInsertJingleLocked() {
+		return p.pickJingleLocked(), true
+	}
+	// 3. Regular advance.
 	t := p.tracks[p.current]
 	p.current = (p.current + 1) % len(p.tracks)
-	// Reshuffle when we loop back to the start in shuffle mode.
 	if p.current == 0 && p.mode == ModeShuffle {
 		p.shuffle()
 	}
+	p.tracksSinceJingle++
+	return t, false
+}
+
+// shouldInsertJingleLocked checks both cadence predicates.
+// Caller must hold p.mu.
+func (p *Player) shouldInsertJingleLocked() bool {
+	if !p.jingle.Enabled() {
+		return false
+	}
+	if p.jingle.EveryTracks > 0 && p.tracksSinceJingle >= p.jingle.EveryTracks {
+		return true
+	}
+	if p.jingle.EveryMinutes > 0 && time.Since(p.lastJingleAt) >= time.Duration(p.jingle.EveryMinutes)*time.Minute {
+		return true
+	}
+	return false
+}
+
+// pickJingleLocked selects the next jingle from the pool and resets counters.
+// For a pool of size > 1 it rotates through with a random starting offset
+// (set in NewPlayer) to avoid back-to-back repeats across restarts.
+// Caller must hold p.mu.
+func (p *Player) pickJingleLocked() *library.Track {
+	t := p.jingle.Tracks[p.jingleNext%len(p.jingle.Tracks)]
+	p.jingleNext = (p.jingleNext + 1) % len(p.jingle.Tracks)
+	p.tracksSinceJingle = 0
+	p.lastJingleAt = time.Now()
 	return t
 }
 

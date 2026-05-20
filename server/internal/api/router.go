@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"

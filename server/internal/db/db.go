@@ -4,6 +4,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -62,7 +63,10 @@ func migrate(db *sql.DB) error {
 			player_ambient       INTEGER NOT NULL DEFAULT 1,
 			player_show_about    INTEGER NOT NULL DEFAULT 1,
 			player_show_history  INTEGER NOT NULL DEFAULT 1,
-			player_show_playlist INTEGER NOT NULL DEFAULT 1
+			player_show_playlist INTEGER NOT NULL DEFAULT 1,
+			jingle_playlist_id   TEXT NOT NULL DEFAULT '',
+			jingle_every_tracks  INTEGER NOT NULL DEFAULT 0,
+			jingle_every_minutes INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS playlists (
 			id               TEXT PRIMARY KEY,
@@ -134,6 +138,19 @@ func migrate(db *sql.DB) error {
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return err
+		}
+	}
+
+	// Idempotent column additions for upgrades from older schemas.
+	// SQLite returns "duplicate column name" when the column already exists;
+	// that's the steady-state and we ignore it.
+	for _, alter := range []string{
+		`ALTER TABLE mounts ADD COLUMN jingle_playlist_id   TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE mounts ADD COLUMN jingle_every_tracks  INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE mounts ADD COLUMN jingle_every_minutes INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("db: %s: %w", alter, err)
 		}
 	}
 	return nil

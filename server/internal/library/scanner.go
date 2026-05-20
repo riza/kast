@@ -20,17 +20,22 @@ import (
 
 // Track represents a single audio file in the library.
 type Track struct {
-	ID         string    `json:"id"`
-	Path       string    `json:"path"`
-	Title      string    `json:"title"`
-	Artist     string    `json:"artist"`
-	Album      string    `json:"album"`
-	Genre      string    `json:"genre"`
-	DurationMs int64     `json:"duration_ms"`
-	Bitrate    int       `json:"bitrate_kbps"`
-	SizeBytes  int64     `json:"size_bytes"`
-	Folder     string    `json:"folder"`
-	AddedAt    time.Time `json:"added_at"`
+	ID             string    `json:"id"`
+	Path           string    `json:"path"`
+	Title          string    `json:"title"`
+	Artist         string    `json:"artist"`
+	Album          string    `json:"album"`
+	Genre          string    `json:"genre"`
+	DurationMs     int64     `json:"duration_ms"`
+	Bitrate        int       `json:"bitrate_kbps"`
+	SizeBytes      int64     `json:"size_bytes"`
+	Folder         string    `json:"folder"`
+	AddedAt        time.Time `json:"added_at"`
+	HasOverride    bool      `json:"has_override"`
+	OriginalTitle  string    `json:"original_title,omitempty"`
+	OriginalArtist string    `json:"original_artist,omitempty"`
+	OriginalAlbum  string    `json:"original_album,omitempty"`
+	OriginalGenre  string    `json:"original_genre,omitempty"`
 }
 
 // Scanner manages the in-memory track list and background scanning.
@@ -102,10 +107,54 @@ func (s *Scanner) UpdateTrack(id, title, artist, album, genre string) (*Track, e
 		return nil, fmt.Errorf("library: update track: %w", err)
 	}
 
+	if !target.HasOverride {
+		target.OriginalTitle  = target.Title
+		target.OriginalArtist = target.Artist
+		target.OriginalAlbum  = target.Album
+		target.OriginalGenre  = target.Genre
+		target.HasOverride    = true
+	}
 	target.Title  = title
 	target.Artist = artist
 	target.Album  = album
 	target.Genre  = genre
+
+	out := *target
+	return &out, nil
+}
+
+// DeleteOverride removes the stored override for the track with the given ID
+// and restores the original (file-read) metadata in memory.
+func (s *Scanner) DeleteOverride(id string) (*Track, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var target *Track
+	for _, t := range s.tracks {
+		if t.ID == id {
+			target = t
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("track not found: %s", id)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM track_overrides WHERE path = ?`, target.Path); err != nil {
+		return nil, fmt.Errorf("library: delete override: %w", err)
+	}
+
+	if target.HasOverride {
+		target.Title  = target.OriginalTitle
+		target.Artist = target.OriginalArtist
+		target.Album  = target.OriginalAlbum
+		target.Genre  = target.OriginalGenre
+		target.OriginalTitle  = ""
+		target.OriginalArtist = ""
+		target.OriginalAlbum  = ""
+		target.OriginalGenre  = ""
+		target.HasOverride    = false
+	}
 
 	out := *target
 	return &out, nil
@@ -134,6 +183,11 @@ func (s *Scanner) applyOverridesLocked(tracks []*Track) {
 
 	for _, t := range tracks {
 		if o, ok := overrides[t.Path]; ok {
+			t.OriginalTitle  = t.Title
+			t.OriginalArtist = t.Artist
+			t.OriginalAlbum  = t.Album
+			t.OriginalGenre  = t.Genre
+			t.HasOverride    = true
 			t.Title  = o.title
 			t.Artist = o.artist
 			t.Album  = o.album
@@ -186,14 +240,15 @@ func (s *Scanner) Scan(ctx context.Context) error {
 		}
 	}
 
+	if err := s.persist(found); err != nil {
+		slog.Error("library: persist after scan", "err", err)
+	}
+
 	s.mu.Lock()
 	s.tracks = found
 	s.applyOverridesLocked(found)
 	s.mu.Unlock()
 
-	if err := s.persist(found); err != nil {
-		slog.Error("library: persist after scan", "err", err)
-	}
 	slog.Info("library: scan complete", "tracks", len(found))
 	return nil
 }

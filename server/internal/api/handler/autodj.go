@@ -84,7 +84,8 @@ func (h *AutoDJ) Start(c *fiber.Ctx) error {
 	if startFrom == "" {
 		startFrom = pl.LastPlayedPath
 	}
-	if err := h.DJManager.Start(context.Background(), mountName, req.PlaylistID, startFrom, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+	jingle := h.DJManager.ResolveJingles(mountName, byPath)
+	if err := h.DJManager.Start(context.Background(), mountName, req.PlaylistID, startFrom, onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
 		return respond.Error(c, fiber.StatusInternalServerError, err.Error())
 	}
 	if h.Webhooks != nil {

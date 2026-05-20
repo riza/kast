@@ -20,6 +20,7 @@ export type Mount = {
   playerStationName: string; playerAccent: string; playerAccentSoft: string
   playerTheme: string; playerLayout: string; playerAmbient: boolean
   playerShowAbout: boolean; playerShowHistory: boolean; playerShowPlaylist: boolean
+  jinglePlaylistId: string; jingleEveryTracks: number; jingleEveryMinutes: number
 }
 
 export function adaptApiMount(m: APIMount): Mount {
@@ -38,6 +39,9 @@ export function adaptApiMount(m: APIMount): Mount {
     playerShowAbout: m.player_show_about ?? true,
     playerShowHistory: m.player_show_history ?? true,
     playerShowPlaylist: m.player_show_playlist ?? true,
+    jinglePlaylistId: m.jingle_playlist_id ?? "",
+    jingleEveryTracks: m.jingle_every_tracks ?? 0,
+    jingleEveryMinutes: m.jingle_every_minutes ?? 0,
   }
 }
 

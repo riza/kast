@@ -69,6 +69,9 @@ export type APIMount = {
   player_show_about:    boolean
   player_show_history:  boolean
   player_show_playlist: boolean
+  jingle_playlist_id:   string
+  jingle_every_tracks:  number
+  jingle_every_minutes: number
 }
 
 export type PlayerConfigBody = {
@@ -83,18 +86,29 @@ export type PlayerConfigBody = {
   player_show_playlist: boolean
 }
 
+export type JingleConfigBody = {
+  jingle_playlist_id:   string
+  jingle_every_tracks:  number
+  jingle_every_minutes: number
+}
+
 export type APITrack = {
-  id:           string
-  path:         string
-  title:        string
-  artist:       string
-  album:        string
-  genre:        string
-  duration_ms:  number
-  bitrate_kbps: number
-  size_bytes:   number
-  folder:       string
-  added_at:     string
+  id:              string
+  path:            string
+  title:           string
+  artist:          string
+  album:           string
+  genre:           string
+  duration_ms:     number
+  bitrate_kbps:    number
+  size_bytes:      number
+  folder:          string
+  added_at:        string
+  has_override:    boolean
+  original_title?:  string
+  original_artist?: string
+  original_album?:  string
+  original_genre?:  string
 }
 
 export type APIPlaylist = {
@@ -439,6 +453,13 @@ export const api = {
         body:   JSON.stringify(body),
       }),
 
+    /** PUT /api/mounts/{name}/jingles — update jingle/ad insertion rule */
+    updateJingleConfig: (name: string, body: JingleConfigBody) =>
+      apiFetch<{ status: string }>(`/api/mounts/${slug(name)}/jingles`, {
+        method: "PUT",
+        body:   JSON.stringify(body),
+      }),
+
     /** POST /api/mounts/{name}/autodj */
     startAutoDJ: (name: string, body: StartAutoDJBody) =>
       apiFetch<void>(`/api/mounts/${slug(name)}/autodj`, {
@@ -496,6 +517,10 @@ export const api = {
         method: "PATCH",
         body:   JSON.stringify(body),
       }),
+
+    /** DELETE /api/library/:id/override — revert to file's ID3 values */
+    resetOverride: (id: string) =>
+      apiFetch<APITrack>(`/api/library/${id}/override`, { method: "DELETE" }),
 
     /** POST /api/library/scan */
     scan: () =>

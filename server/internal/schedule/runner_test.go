@@ -34,7 +34,7 @@ func newFakeDJ() *fakeDJ {
 	return &fakeDJ{sessions: make(map[string]*djmanager.SessionInfo)}
 }
 
-func (f *fakeDJ) Start(_ context.Context, mountName, playlistID, _ string, _ func(string), tracks []*library.Track, _ autodj.Mode, _ int) error {
+func (f *fakeDJ) Start(_ context.Context, mountName, playlistID, _ string, _ func(string), tracks []*library.Track, _ autodj.Mode, _ int, _ autodj.JingleConfig) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.starts = append(f.starts, startCall{mountName, playlistID, len(tracks)})
@@ -54,6 +54,10 @@ func (f *fakeDJ) GetSession(mountName string) *djmanager.SessionInfo {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.sessions[mountName]
+}
+
+func (f *fakeDJ) ResolveJingles(_ string, _ map[string]*library.Track) autodj.JingleConfig {
+	return autodj.JingleConfig{}
 }
 
 // stubScanner returns a fixed track list. Used because the runner needs to

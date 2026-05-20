@@ -21,9 +21,10 @@ const tickInterval = 5 * time.Second
 // djStarter is the subset of djmanager.Manager the runner needs. Defined as
 // an interface so tests can supply a fake without spinning up ffmpeg.
 type djStarter interface {
-	Start(ctx context.Context, mountName string, playlistID string, startFromPath string, onTrackChange func(path string), tracks []*library.Track, mode autodj.Mode, crossfadeMs int) error
+	Start(ctx context.Context, mountName string, playlistID string, startFromPath string, onTrackChange func(path string), tracks []*library.Track, mode autodj.Mode, crossfadeMs int, jingle autodj.JingleConfig) error
 	Stop(mountName string) error
 	GetSession(mountName string) *djmanager.SessionInfo
+	ResolveJingles(mountName string, byPath map[string]*library.Track) autodj.JingleConfig
 }
 
 // trackProvider returns the current library tracks. Scanner satisfies this.
@@ -197,7 +198,8 @@ func (r *Runner) applyStart(now time.Time, mount string, s *Schedule) {
 		}
 	}
 
-	if err := r.dj.Start(context.Background(), mount, playlistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+	jingle := r.dj.ResolveJingles(mount, byPath)
+	if err := r.dj.Start(context.Background(), mount, playlistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
 		r.emitSkipped(mount, s, "dj start failed: "+err.Error())
 		slog.Error("schedule: dj.Start failed", "schedule", s.ID, "mount", mount, "err", err)
 		return

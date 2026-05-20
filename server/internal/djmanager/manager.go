@@ -82,6 +82,7 @@ func NewManager(segmenter *hls.Segmenter, mounts *mount.Manager, db *sql.DB, pla
 // tracks must be non-empty (caller should validate before calling).
 // startFromPath resumes playback from the track after the given path (empty = from beginning).
 // onTrackChange, if non-nil, is called each time a new track starts playing.
+// jingle (zero-value or empty Tracks) disables jingle insertion.
 func (m *Manager) Start(
 	ctx context.Context,
 	mountName string,
@@ -91,6 +92,7 @@ func (m *Manager) Start(
 	tracks []*library.Track,
 	mode autodj.Mode,
 	crossfadeMs int,
+	jingle autodj.JingleConfig,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -175,6 +177,20 @@ func (m *Manager) Start(
 
 	// Start the AutoDJ player in a background goroutine.
 	player := autodj.NewPlayer(tracks, mode, crossfadeMs, startFromPath, trackCb)
+	if jingle.Enabled() {
+		jingleCb := func(t *library.Track) {
+			if m.webhooks != nil {
+				m.webhooks.Emit("autodj.jingle.played", map[string]any{
+					"mount":       mountName,
+					"id":          t.ID,
+					"title":       t.Title,
+					"artist":      t.Artist,
+					"duration_ms": t.DurationMs,
+				})
+			}
+		}
+		player.SetJingles(jingle, jingleCb)
+	}
 	player.Start(sessCtx, pipeW) // goroutine; closes pipeW when done
 
 	sess := &session{
@@ -384,6 +400,47 @@ func (m *Manager) RecentTracks(mountName string) []*library.Track {
 	return out
 }
 
+// ResolveJingles returns the jingle insertion config for a mount, looking up
+// its configured jingle playlist and matching track paths against byPath.
+// Returns a disabled config (Enabled() == false) when:
+//   - the mount has no jingle_playlist_id set
+//   - both interval values are zero
+//   - the jingle playlist is missing or empty in the library
+func (m *Manager) ResolveJingles(mountName string, byPath map[string]*library.Track) autodj.JingleConfig {
+	if m.mounts == nil || m.playlists == nil {
+		return autodj.JingleConfig{}
+	}
+	mt, err := m.mounts.Get(mountName)
+	if err != nil || mt.JinglePlaylistID == "" {
+		return autodj.JingleConfig{}
+	}
+	if mt.JingleEveryTracks <= 0 && mt.JingleEveryMinutes <= 0 {
+		return autodj.JingleConfig{}
+	}
+	jp, err := m.playlists.Get(mt.JinglePlaylistID)
+	if err != nil {
+		slog.Warn("djmanager: jingle playlist not found",
+			"mount", mountName, "playlist_id", mt.JinglePlaylistID)
+		return autodj.JingleConfig{}
+	}
+	jingles := make([]*library.Track, 0, len(jp.TrackPaths))
+	for _, p := range jp.TrackPaths {
+		if t, ok := byPath[p]; ok {
+			jingles = append(jingles, t)
+		}
+	}
+	if len(jingles) == 0 {
+		slog.Warn("djmanager: jingle playlist has no library tracks",
+			"mount", mountName, "playlist", jp.Name)
+		return autodj.JingleConfig{}
+	}
+	return autodj.JingleConfig{
+		Tracks:       jingles,
+		EveryTracks:  mt.JingleEveryTracks,
+		EveryMinutes: mt.JingleEveryMinutes,
+	}
+}
+
 // saveState persists a snapshot of all active sessions to the database
 // so they can be restored on the next startup.
 func (m *Manager) saveState() {
@@ -486,7 +543,8 @@ func (m *Manager) Restore(ctx context.Context) {
 			}
 		}
 
-		if err := m.Start(ctx, s.Mount, s.PlaylistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+		jingle := m.ResolveJingles(s.Mount, byPath)
+		if err := m.Start(ctx, s.Mount, s.PlaylistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
 			slog.Error("djmanager: restore: failed to start", "mount", s.Mount, "err", err)
 		} else {
 			slog.Info("djmanager: restored session", "mount", s.Mount, "playlist", pl.Name, "mode", s.Mode)
@@ -541,7 +599,8 @@ func (m *Manager) RestartMount(mountName string) (bool, error) {
 		}
 	}
 
-	if err := m.Start(context.Background(), mountName, playlistID, "", onTrackChange, tracks, mode, pl.CrossfadeMs); err != nil {
+	jingle := m.ResolveJingles(mountName, byPath)
+	if err := m.Start(context.Background(), mountName, playlistID, "", onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
 		return false, err
 	}
 	slog.Info("djmanager: restarted (audio config change)", "mount", mountName)

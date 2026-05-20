@@ -53,6 +53,7 @@ import {
   Clock,
   Upload,
   Pencil,
+  RotateCcw,
 } from "lucide-react"
 
 function YtIcon({ className }: { className?: string }) {
@@ -74,18 +75,23 @@ import {
 // ── Types ──
 
 type Track = {
-  id:          string
-  path:        string
-  title:       string
-  artist:      string
-  album:       string
-  genre:       string
-  duration:    string
-  durationSec: number
-  bitrate:     string
-  size:        string
-  folder:      string
-  dateAdded:   string
+  id:             string
+  path:           string
+  title:          string
+  artist:         string
+  album:          string
+  genre:          string
+  duration:       string
+  durationSec:    number
+  bitrate:        string
+  size:           string
+  folder:         string
+  dateAdded:      string
+  hasOverride:    boolean
+  originalTitle:  string
+  originalArtist: string
+  originalAlbum:  string
+  originalGenre:  string
 }
 
 // ── Helpers ──
@@ -105,18 +111,23 @@ function fmtBytes(bytes: number): string {
 
 function adaptApiTrack(t: APITrack): Track {
   return {
-    id:          t.id,
-    path:        t.path,
-    title:       t.title  || t.path.split("/").pop()?.replace(/\.[^.]+$/, "") || t.path,
-    artist:      t.artist || "",
-    album:       t.album  || "",
-    genre:       t.genre  || "",
-    duration:    formatMs(t.duration_ms),
-    durationSec: Math.round(t.duration_ms / 1000),
-    bitrate:     t.bitrate_kbps ? `${t.bitrate_kbps} kbps` : "",
-    size:        t.size_bytes   ? fmtBytes(t.size_bytes)   : "",
-    folder:      t.folder || t.path.split("/").slice(0, -1).join("/"),
-    dateAdded:   t.added_at.slice(0, 10),
+    id:             t.id,
+    path:           t.path,
+    title:          t.title  || t.path.split("/").pop()?.replace(/\.[^.]+$/, "") || t.path,
+    artist:         t.artist || "",
+    album:          t.album  || "",
+    genre:          t.genre  || "",
+    duration:       formatMs(t.duration_ms),
+    durationSec:    Math.round(t.duration_ms / 1000),
+    bitrate:        t.bitrate_kbps ? `${t.bitrate_kbps} kbps` : "",
+    size:           t.size_bytes   ? fmtBytes(t.size_bytes)   : "",
+    folder:         t.folder || t.path.split("/").slice(0, -1).join("/"),
+    dateAdded:      t.added_at.slice(0, 10),
+    hasOverride:    !!t.has_override,
+    originalTitle:  t.original_title  || "",
+    originalArtist: t.original_artist || "",
+    originalAlbum:  t.original_album  || "",
+    originalGenre:  t.original_genre  || "",
   }
 }
 
@@ -541,9 +552,38 @@ function EditTrackDialog({
     }
   }
 
+  const handleReset = async () => {
+    if (!track) return
+    setSaving(true)
+    try {
+      const reverted = await api.library.resetOverride(track.id)
+      onSaved(adaptApiTrack(reverted))
+      toast.success("Reverted to file metadata")
+      onClose()
+    } catch (err: unknown) {
+      toast.error(`Failed to reset: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault()
+      handleSave()
+    }
+  }
+
+  const fields = [
+    { label: "Title",  value: title,  set: setTitle,  original: track?.originalTitle  ?? "" },
+    { label: "Artist", value: artist, set: setArtist, original: track?.originalArtist ?? "" },
+    { label: "Album",  value: album,  set: setAlbum,  original: track?.originalAlbum  ?? "" },
+    { label: "Genre",  value: genre,  set: setGenre,  original: track?.originalGenre  ?? "" },
+  ] as const
+
   return (
     <Dialog open={!!track} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" onKeyDown={handleKeyDown}>
         <DialogHeader>
           <DialogTitle>Edit Track</DialogTitle>
           <DialogDescription className="truncate text-xs font-mono">
@@ -551,14 +591,7 @@ function EditTrackDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-1">
-          {(
-            [
-              { label: "Title",  value: title,  set: setTitle  },
-              { label: "Artist", value: artist, set: setArtist },
-              { label: "Album",  value: album,  set: setAlbum  },
-              { label: "Genre",  value: genre,  set: setGenre  },
-            ] as const
-          ).map(({ label, value, set }) => (
+          {fields.map(({ label, value, set, original }) => (
             <div key={label} className="grid gap-1.5">
               <label className="text-xs text-muted-foreground">{label}</label>
               <Input
@@ -566,10 +599,27 @@ function EditTrackDialog({
                 onChange={(e) => set(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSave()}
               />
+              {track?.hasOverride && original && original !== value && (
+                <p className="text-[10.5px] text-muted-foreground font-mono truncate">
+                  Original: {original}
+                </p>
+              )}
             </div>
           ))}
         </div>
         <DialogFooter>
+          {track?.hasOverride && (
+            <Button
+              variant="ghost"
+              onClick={handleReset}
+              disabled={saving}
+              className="mr-auto"
+              title="Discard overrides and restore file's ID3 metadata"
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Reset to file
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} disabled={saving}>
             {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : "Save"}

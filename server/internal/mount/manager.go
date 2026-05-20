@@ -48,6 +48,10 @@ type Mount struct {
 	PlayerShowAbout    bool   `json:"player_show_about"`
 	PlayerShowHistory  bool   `json:"player_show_history"`
 	PlayerShowPlaylist bool   `json:"player_show_playlist"`
+
+	JinglePlaylistID   string `json:"jingle_playlist_id"`
+	JingleEveryTracks  int    `json:"jingle_every_tracks"`
+	JingleEveryMinutes int    `json:"jingle_every_minutes"`
 }
 
 // MetadataUpdate is the DTO for updating a mount's editable metadata fields.
@@ -71,6 +75,14 @@ type PlayerConfigUpdate struct {
 	ShowAbout    bool   `json:"player_show_about"`
 	ShowHistory  bool   `json:"player_show_history"`
 	ShowPlaylist bool   `json:"player_show_playlist"`
+}
+
+// JingleConfigUpdate is the DTO for updating a mount's jingle/ad insertion rule.
+// PlaylistID empty or both intervals zero disables insertion.
+type JingleConfigUpdate struct {
+	PlaylistID   string `json:"jingle_playlist_id"`
+	EveryTracks  int    `json:"jingle_every_tracks"`
+	EveryMinutes int    `json:"jingle_every_minutes"`
 }
 
 var validName = regexp.MustCompile(`^/[a-z0-9_\-]{1,64}$`)
@@ -336,6 +348,39 @@ func (m *Manager) UpdateMetadata(name string, req MetadataUpdate) error {
 	return nil
 }
 
+// UpdateJingleConfig saves the jingle/ad insertion rule for a mount.
+// Negative interval values are clamped to 0 (disabled).
+func (m *Manager) UpdateJingleConfig(name string, cfg JingleConfigUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mt, ok := m.mounts[name]
+	if !ok {
+		return ErrNotFound
+	}
+	if cfg.EveryTracks < 0 {
+		cfg.EveryTracks = 0
+	}
+	if cfg.EveryMinutes < 0 {
+		cfg.EveryMinutes = 0
+	}
+	mt.JinglePlaylistID   = cfg.PlaylistID
+	mt.JingleEveryTracks  = cfg.EveryTracks
+	mt.JingleEveryMinutes = cfg.EveryMinutes
+
+	_, err := m.db.Exec(`
+		UPDATE mounts SET
+			jingle_playlist_id   = ?,
+			jingle_every_tracks  = ?,
+			jingle_every_minutes = ?
+		WHERE name = ?`,
+		cfg.PlaylistID, cfg.EveryTracks, cfg.EveryMinutes, name,
+	)
+	if err != nil {
+		slog.Error("mount: db update jingle config", "err", err)
+	}
+	return nil
+}
+
 // VerifySourcePassword returns true if password matches the mount's source password.
 func (m *Manager) VerifySourcePassword(name, password string) bool {
 	m.mu.RLock()
@@ -356,13 +401,15 @@ func (m *Manager) insertDB(mt *Mount) error {
 			protocol, codec, bitrate, created_at,
 			player_station_name, player_accent, player_accent_soft,
 			player_theme, player_layout,
-			player_ambient, player_show_about, player_show_history, player_show_playlist
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			player_ambient, player_show_about, player_show_history, player_show_playlist,
+			jingle_playlist_id, jingle_every_tracks, jingle_every_minutes
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		mt.ID, mt.Name, mt.Description, mt.Genre, mt.Website, mt.SourcePassword,
 		mt.Protocol, mt.Codec, mt.Bitrate, mt.CreatedAt.UTC().Format(time.RFC3339),
 		mt.PlayerStationName, mt.PlayerAccent, mt.PlayerAccentSoft,
 		mt.PlayerTheme, mt.PlayerLayout,
 		btoi(mt.PlayerAmbient), btoi(mt.PlayerShowAbout), btoi(mt.PlayerShowHistory), btoi(mt.PlayerShowPlaylist),
+		mt.JinglePlaylistID, mt.JingleEveryTracks, mt.JingleEveryMinutes,
 	)
 	return err
 }
@@ -373,7 +420,8 @@ func (m *Manager) load() error {
 		       protocol, codec, bitrate, created_at,
 		       player_station_name, player_accent, player_accent_soft,
 		       player_theme, player_layout,
-		       player_ambient, player_show_about, player_show_history, player_show_playlist
+		       player_ambient, player_show_about, player_show_history, player_show_playlist,
+		       jingle_playlist_id, jingle_every_tracks, jingle_every_minutes
 		FROM mounts`)
 	if err != nil {
 		return fmt.Errorf("mount: load: %w", err)
@@ -392,6 +440,7 @@ func (m *Manager) load() error {
 			&mt.PlayerStationName, &mt.PlayerAccent, &mt.PlayerAccentSoft,
 			&mt.PlayerTheme, &mt.PlayerLayout,
 			&ambient, &showAbout, &showHistory, &showPlaylist,
+			&mt.JinglePlaylistID, &mt.JingleEveryTracks, &mt.JingleEveryMinutes,
 		); err != nil {
 			return fmt.Errorf("mount: load scan: %w", err)
 		}

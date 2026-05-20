@@ -152,6 +152,16 @@ func (h *Library) Update(c *fiber.Ctx) error {
 	return respond.OK(c, track)
 }
 
+// ResetOverride godoc: DELETE /api/library/:id/override
+// Removes any stored metadata override, restoring the file's ID3 values.
+func (h *Library) ResetOverride(c *fiber.Ctx) error {
+	track, err := h.Scanner.DeleteOverride(c.Params("id"))
+	if err != nil {
+		return respond.Error(c, fiber.StatusNotFound, err.Error())
+	}
+	return respond.OK(c, track)
+}
+
 // Scan godoc: POST /api/library/scan
 func (h *Library) Scan(c *fiber.Ctx) error {
 	go func() {

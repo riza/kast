@@ -15,7 +15,7 @@ import {
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import {
-  api, type APINowPlaying, type PlayerConfigBody,
+  api, type APINowPlaying, type PlayerConfigBody, type JingleConfigBody,
   type APIPlaylist, type APIAutoDJSession, type APIAutoDJTracks,
   type APIAutoDJTrackInfo, type APIListener,
   type UpdateMountMetadataBody,
@@ -562,6 +562,16 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
   const [trackData, setTrackData]               = React.useState<APIAutoDJTracks | null>(null)
   const nowPlayingRowRef                        = React.useRef<HTMLDivElement | null>(null)
 
+  // Jingle/ad insertion. Saved on the mount, applied on next AutoDJ start.
+  const [jinglePlaylistId,   setJinglePlaylistId]   = React.useState(mount.jinglePlaylistId)
+  const [jingleEveryTracks,  setJingleEveryTracks]  = React.useState(mount.jingleEveryTracks)
+  const [jingleEveryMinutes, setJingleEveryMinutes] = React.useState(mount.jingleEveryMinutes)
+  const [jingleSaving,       setJingleSaving]       = React.useState(false)
+  const jingleDirty =
+    jinglePlaylistId   !== mount.jinglePlaylistId   ||
+    jingleEveryTracks  !== mount.jingleEveryTracks  ||
+    jingleEveryMinutes !== mount.jingleEveryMinutes
+
   React.useEffect(() => {
     Promise.all([api.playlists.list(), api.mounts.autoDJStatus(mount.name).catch(() => null)])
       .then(([pls, sess]) => { setPlaylists(pls); setSession(sess); if (sess) setSelectedPlaylist(sess.playlist_id) })
@@ -612,6 +622,35 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
       .finally(() => setActing(false))
   }
 
+  const handleJingleSave = () => {
+    const body: JingleConfigBody = {
+      jingle_playlist_id:   jinglePlaylistId,
+      jingle_every_tracks:  Math.max(0, jingleEveryTracks | 0),
+      jingle_every_minutes: Math.max(0, jingleEveryMinutes | 0),
+    }
+    setJingleSaving(true)
+    api.mounts.updateJingleConfig(mount.name, body)
+      .then(() => {
+        mount.jinglePlaylistId   = body.jingle_playlist_id
+        mount.jingleEveryTracks  = body.jingle_every_tracks
+        mount.jingleEveryMinutes = body.jingle_every_minutes
+        const msg = body.jingle_playlist_id && (body.jingle_every_tracks > 0 || body.jingle_every_minutes > 0)
+          ? "Jingle settings saved" : "Jingles disabled"
+        toast.success(msg + (isRunning ? " — restart AutoDJ to apply" : ""))
+      })
+      .catch((err) => toast.error(`Failed: ${err.message}`))
+      .finally(() => setJingleSaving(false))
+  }
+
+  const jingleConfigured = !!mount.jinglePlaylistId && (mount.jingleEveryTracks > 0 || mount.jingleEveryMinutes > 0)
+  const jingleSummary = jingleConfigured
+    ? [
+        mount.jingleEveryTracks  > 0 ? `every ${mount.jingleEveryTracks} track${mount.jingleEveryTracks  !== 1 ? "s" : ""}` : null,
+        mount.jingleEveryMinutes > 0 ? `every ${mount.jingleEveryMinutes} min`                                              : null,
+      ].filter(Boolean).join(" or ")
+    : ""
+  const jinglePlaylistName = playlists.find((p) => p.id === mount.jinglePlaylistId)?.name ?? ""
+
   if (loading) return (
     <div className="flex items-center justify-center py-12 text-[12px] text-ink-500 font-mono">Loading…</div>
   )
@@ -628,6 +667,11 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
             </p>
           )}
           {!isRunning && <p className="text-[12px] text-ink-500">Not running</p>}
+          {isRunning && jingleConfigured && (
+            <p className="mt-0.5 text-[11px] text-ink-500">
+              Jingles: <span className="text-ink-300">{jinglePlaylistName || "—"}</span> · {jingleSummary}
+            </p>
+          )}
         </div>
         <span className={cn(
           "text-[11px] font-mono px-2 py-0.5 rounded border",
@@ -758,6 +802,77 @@ function MountAutoDJTab({ mount }: { mount: Mount }) {
               {m}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Jingles & Ads */}
+      <div className="space-y-2.5">
+        <SectionLabel>Jingles &amp; Ads</SectionLabel>
+        <div className="rounded-md border border-ink-800 bg-ink-950/40 p-3 space-y-3">
+          <div className="space-y-1">
+            <p className="text-[10.5px] uppercase tracking-wider text-ink-500 font-mono">Source playlist</p>
+            <Select
+              value={jinglePlaylistId || "__none__"}
+              onValueChange={(v) => setJinglePlaylistId(v === "__none__" ? "" : v)}
+              disabled={jingleSaving}
+            >
+              <SelectTrigger className="bg-ink-950 border-ink-800 text-ink-100 focus:ring-k-500/30 h-8 text-[12.5px]">
+                <SelectValue placeholder="None — disabled" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">None — disabled</SelectItem>
+                {playlists.map((pl) => (
+                  <SelectItem key={pl.id} value={pl.id}>
+                    {pl.name}{" "}
+                    <span className="text-ink-500 ml-1 text-xs">{pl.track_paths.length} tracks</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-500 font-mono">Every N tracks</p>
+              <input
+                type="number" min={0} max={999}
+                value={jingleEveryTracks}
+                onChange={(e) => setJingleEveryTracks(Math.max(0, parseInt(e.target.value || "0", 10) || 0))}
+                disabled={jingleSaving || !jinglePlaylistId}
+                className="h-8 w-full bg-ink-950 border border-ink-800 px-2 text-[12.5px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none disabled:opacity-50"
+                placeholder="0 = off"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10.5px] uppercase tracking-wider text-ink-500 font-mono">Every N minutes</p>
+              <input
+                type="number" min={0} max={999}
+                value={jingleEveryMinutes}
+                onChange={(e) => setJingleEveryMinutes(Math.max(0, parseInt(e.target.value || "0", 10) || 0))}
+                disabled={jingleSaving || !jinglePlaylistId}
+                className="h-8 w-full bg-ink-950 border border-ink-800 px-2 text-[12.5px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none disabled:opacity-50"
+                placeholder="0 = off"
+              />
+            </div>
+          </div>
+
+          <p className="text-[11px] text-ink-500 leading-relaxed">
+            Inserts one track from the source playlist whichever cadence fires first.
+            Both counters reset after every insertion. Changes apply on next AutoDJ start.
+          </p>
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-ink-500">
+              {jingleDirty ? "Unsaved changes" : isRunning && jingleConfigured ? "Restart AutoDJ to apply" : ""}
+            </span>
+            <button
+              onClick={handleJingleSave}
+              disabled={jingleSaving || !jingleDirty}
+              className="h-8 px-3 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[12.5px] font-semibold transition-colors"
+            >
+              {jingleSaving ? "Saving…" : "Save jingle settings"}
+            </button>
+          </div>
         </div>
       </div>
 

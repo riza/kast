@@ -29,6 +29,7 @@ var ValidEvents = map[string]bool{
 	"autodj.stopped":         true,
 	"autodj.track.changed":   true,
 	"autodj.track.skipped":   true,
+	"autodj.jingle.played":   true,
 	"listener.count.changed": true,
 	"playlist.created":       true,
 	"playlist.updated":       true,
