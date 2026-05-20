@@ -162,7 +162,7 @@ kast/
 - [x] Scheduled playlists — [docs](docs/scheduled-playlists.md)
 - [x] Jingle/ad insertion — [docs](docs/jingle-insertion.md)
 - [x] Webhooks — [docs](docs/webhooks.md)
-- [ ] Track metadata editing (artist/title/tags — mount-level metadata already supported)
+- [x] Track metadata editing (artist/title/tags — mount-level metadata already supported)
 - [ ] Song request system (listeners request tracks via public API)
 - [ ] Listener analytics history (persistent time-series — current counts already live)
 - [ ] Web DJ / WHIP ingress (WHEP egress already supported)
