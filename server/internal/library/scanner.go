@@ -203,6 +203,9 @@ func (s *Scanner) Scan(ctx context.Context) error {
 
 	for _, dir := range s.scanDirs {
 		dir = filepath.Clean(dir)
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
 
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil {

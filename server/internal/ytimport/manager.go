@@ -307,8 +307,14 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 	videoURL := "https://www.youtube.com/watch?v=" + item.YTID
 
 	// Output template: "<Title>.mp3" in the configured output directory.
+	// Use absolute path so yt-dlp's --print after_move:filepath output matches
+	// the absolute paths stored by the library scanner.
 	// --windows-filenames removes characters that are invalid on Windows/some FS.
-	outTpl := filepath.Join(m.outputDir, "%(title)s.%(ext)s")
+	absOutputDir := m.outputDir
+	if abs, err := filepath.Abs(m.outputDir); err == nil {
+		absOutputDir = abs
+	}
+	outTpl := filepath.Join(absOutputDir, "%(title)s.%(ext)s")
 
 	// #nosec G204 — videoURL is constructed from a validated YouTube ID; no shell expansion.
 	dlCtx, dlCancel := context.WithTimeout(context.Background(), 30*time.Minute)
