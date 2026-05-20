@@ -185,7 +185,10 @@ func (m *Manager) DeleteUser(id string) error {
 		}
 	}
 	_, err := m.db.Exec("DELETE FROM users WHERE id = ?", id)
-	return err
+	if err != nil {
+		return fmt.Errorf("authmanager: delete user: %w", err)
+	}
+	return nil
 }
 
 // ChangeRole updates a user's role. Prevents removing the last admin.
@@ -202,7 +205,10 @@ func (m *Manager) ChangeRole(id string, role Role) error {
 		}
 	}
 	_, err := m.db.Exec("UPDATE users SET role = ? WHERE id = ?", string(role), id)
-	return err
+	if err != nil {
+		return fmt.Errorf("authmanager: change role: %w", err)
+	}
+	return nil
 }
 
 // ChangePassword updates a user's password.
@@ -215,7 +221,10 @@ func (m *Manager) ChangePassword(id, newPassword string) error {
 		return err
 	}
 	_, err = m.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(hash), id)
-	return err
+	if err != nil {
+		return fmt.Errorf("authmanager: change password: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) sign(u *User) (string, error) {

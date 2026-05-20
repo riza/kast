@@ -11,6 +11,12 @@ import (
 	"strconv"
 )
 
+const (
+	aacSampleRate      = "44100" // standard AAC/MP3 sample rate (Hz)
+	opusSampleRate     = "48000" // Opus native sample rate (Hz)
+	rtpPayloadTypeOpus = "111"   // dynamic RTP payload type for Opus (RFC 7587)
+)
+
 // Segmenter transcodes an audio stream to HLS using ffmpeg.
 type Segmenter struct {
 	outputDir       string
@@ -103,7 +109,7 @@ func aacHLSOutput(dir, bitrate string, llhls bool, segDuration, playlistSize int
 			"-map", "0:a",
 			"-c:a", "aac",
 			"-b:a", bitrate,
-			"-ar", "44100",
+			"-ar", aacSampleRate,
 			"-f", "hls",
 			"-hls_time", strconv.Itoa(segDuration),
 			"-hls_list_size", strconv.Itoa(playlistSize),
@@ -118,7 +124,7 @@ func aacHLSOutput(dir, bitrate string, llhls bool, segDuration, playlistSize int
 		"-map", "0:a",
 		"-c:a", "aac",
 		"-b:a", bitrate,
-		"-ar", "44100",
+		"-ar", aacSampleRate,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(segDuration),
 		"-hls_list_size", strconv.Itoa(playlistSize),
@@ -134,7 +140,7 @@ func mp3HLSOutput(dir, bitrate string, segDuration, playlistSize int) []string {
 		"-map", "0:a",
 		"-c:a", "libmp3lame",
 		"-b:a", bitrate,
-		"-ar", "44100",
+		"-ar", aacSampleRate,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(segDuration),
 		"-hls_list_size", strconv.Itoa(playlistSize),
@@ -150,7 +156,7 @@ func opusHLSOutput(dir, bitrate string, segDuration, playlistSize int) []string 
 		"-map", "0:a",
 		"-c:a", "libopus",
 		"-b:a", bitrate,
-		"-ar", "48000",
+		"-ar", opusSampleRate,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(segDuration),
 		"-hls_list_size", strconv.Itoa(playlistSize),
@@ -170,10 +176,10 @@ func rtpOutputArgs(rtpPort int, bitrate string) []string {
 		"-map", "0:a",
 		"-c:a", "libopus",
 		"-b:a", bitrate,
-		"-ar", "48000",
+		"-ar", opusSampleRate,
 		"-ac", "2",
 		"-application", "lowdelay",
-		"-payload_type", "111",
+		"-payload_type", rtpPayloadTypeOpus,
 		"-f", "rtp",
 		rtpURL,
 	}

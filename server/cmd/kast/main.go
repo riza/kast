@@ -144,19 +144,17 @@ func run() error {
 	defer rootCancel()
 
 	// ── Initial library scan + AutoDJ restore + scheduler (background) ───────
+	// Run sequentially in one goroutine: scan → restore → run (blocking until
+	// rootCtx is cancelled). The runner must not start until Restore completes
+	// so the first tick can adopt existing sessions rather than fight them.
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		scanCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		if err := scanner.Scan(ctx); err != nil {
+		if err := scanner.Scan(scanCtx); err != nil {
 			slog.Error("initial library scan", "err", err)
 		}
-		// Restore AutoDJ sessions that were active before the last shutdown.
-		// Runs after the scan so that track data is available.
-		djm.Restore(context.Background())
-		// Start the schedule runner only after Restore so the first tick sees
-		// the real session state and can adopt existing sessions rather than
-		// fighting them.
-		go scheduleRunner.Run(rootCtx)
+		djm.Restore(rootCtx)
+		scheduleRunner.Run(rootCtx)
 	}()
 
 	// ── Start servers ────────────────────────────────────────────────────────

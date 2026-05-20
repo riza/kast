@@ -25,7 +25,9 @@ func (h *Server) Restart(c *fiber.Ctx) error {
 			slog.Error("restart: find process", "err", err)
 			return
 		}
-		_ = p.Signal(syscall.SIGTERM)
+		if err := p.Signal(syscall.SIGTERM); err != nil {
+			slog.Error("restart: send SIGTERM", "err", err)
+		}
 	}()
 	return respond.OK(c, fiber.Map{"message": "server restarting"})
 }
@@ -49,7 +51,9 @@ func (h *Server) FactoryReset(c *fiber.Ctx) error {
 			slog.Error("factory reset: find process", "err", err)
 			return
 		}
-		_ = p.Signal(syscall.SIGTERM)
+		if err := p.Signal(syscall.SIGTERM); err != nil {
+			slog.Error("factory reset: send SIGTERM", "err", err)
+		}
 	}()
 
 	return respond.OK(c, fiber.Map{"message": "factory reset initiated"})

@@ -112,7 +112,9 @@ func (h *Library) Upload(c *fiber.Ctx) error {
 		if _, copyErr := io.Copy(out, src); copyErr != nil {
 			src.Close()
 			out.Close()
-			_ = os.Remove(dst)
+			if removeErr := os.Remove(dst); removeErr != nil {
+				slog.Warn("library: upload cleanup: remove failed", "path", dst, "err", removeErr)
+			}
 			results = append(results, result{Name: fh.Filename, Error: "failed to write"})
 			continue
 		}
@@ -124,7 +126,9 @@ func (h *Library) Upload(c *fiber.Ctx) error {
 	}
 
 	go func() {
-		if err := h.Scanner.Scan(context.Background()); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := h.Scanner.Scan(ctx); err != nil {
 			slog.Warn("library: post-upload scan failed", "err", err)
 		}
 	}()
@@ -165,8 +169,10 @@ func (h *Library) ResetOverride(c *fiber.Ctx) error {
 // Scan godoc: POST /api/library/scan
 func (h *Library) Scan(c *fiber.Ctx) error {
 	go func() {
-		if err := h.Scanner.Scan(context.Background()); err != nil {
-			_ = err
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := h.Scanner.Scan(ctx); err != nil {
+			slog.Error("library: scan failed", "err", err)
 		}
 	}()
 	return respond.OK(c, fiber.Map{"status": "scan started"})

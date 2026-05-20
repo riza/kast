@@ -127,7 +127,7 @@ func outsideWindow() time.Time {
 func TestTick_StartsWhenWindowOpens(t *testing.T) {
 	r, fdj, s, _ := setup(t)
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 
 	require.Len(t, fdj.starts, 1)
 	assert.Equal(t, "/radio1", fdj.starts[0].mount)
@@ -138,21 +138,21 @@ func TestTick_StartsWhenWindowOpens(t *testing.T) {
 func TestTick_NoOpWhenAlreadyAssigned(t *testing.T) {
 	r, fdj, _, _ := setup(t)
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	require.Len(t, fdj.starts, 1)
 
 	// Second tick within the same window: no new Start.
-	r.tick(inWindow().Add(time.Minute))
+	r.tick(context.Background(), inWindow().Add(time.Minute))
 	assert.Len(t, fdj.starts, 1)
 }
 
 func TestTick_StopsWhenWindowCloses(t *testing.T) {
 	r, fdj, _, _ := setup(t)
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	require.Len(t, fdj.starts, 1)
 
-	r.tick(outsideWindow())
+	r.tick(context.Background(), outsideWindow())
 	require.Len(t, fdj.stops, 1)
 	assert.Equal(t, "/radio1", fdj.stops[0])
 	_, owned := r.assignment["/radio1"]
@@ -164,7 +164,7 @@ func TestTick_DoesNotStopUnownedMount(t *testing.T) {
 
 	// Mount is idle, scheduler has no assignment. Outside the window: nothing
 	// should happen.
-	r.tick(outsideWindow())
+	r.tick(context.Background(), outsideWindow())
 	assert.Empty(t, fdj.starts)
 	assert.Empty(t, fdj.stops)
 }
@@ -176,7 +176,7 @@ func TestTick_AdoptsExistingSessionMatchingDesired(t *testing.T) {
 	// (the boot-after-Restore scenario).
 	fdj.sessions["/radio1"] = &djmanager.SessionInfo{Mount: "/radio1", PlaylistID: s.PlaylistID}
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	assert.Empty(t, fdj.starts, "should adopt, not restart")
 	assert.Equal(t, s.ID, r.assignment["/radio1"])
 }
@@ -188,7 +188,7 @@ func TestTick_ReplacesExistingSessionWithDifferentPlaylist(t *testing.T) {
 	// scheduler must take over.
 	fdj.sessions["/radio1"] = &djmanager.SessionInfo{Mount: "/radio1", PlaylistID: "other-playlist"}
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	require.Len(t, fdj.starts, 1)
 }
 
@@ -196,7 +196,7 @@ func TestTick_SkipsWhenPlaylistHasNoLibraryTracks(t *testing.T) {
 	r, fdj, _, _ := setup(t)
 	r.scanner = &stubScanner{tracks: nil} // no tracks resolvable
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	assert.Empty(t, fdj.starts)
 	_, owned := r.assignment["/radio1"]
 	assert.False(t, owned, "skip should not claim ownership")
@@ -210,7 +210,7 @@ func TestTick_RespectsWeekdayBits(t *testing.T) {
 	_, err := r.schedules.Update(s.ID, UpdateRequest{DaysMask: &mask})
 	require.NoError(t, err)
 
-	r.tick(inWindow()) // a Wednesday
+	r.tick(context.Background(), inWindow()) // a Wednesday
 	assert.Empty(t, fdj.starts)
 }
 
@@ -221,7 +221,7 @@ func TestTick_DisabledScheduleNeverFires(t *testing.T) {
 	_, err := r.schedules.Update(s.ID, UpdateRequest{Enabled: &enabled})
 	require.NoError(t, err)
 
-	r.tick(inWindow())
+	r.tick(context.Background(), inWindow())
 	assert.Empty(t, fdj.starts)
 }
 

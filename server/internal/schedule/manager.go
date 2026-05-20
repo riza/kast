@@ -92,7 +92,7 @@ func (m *Manager) load() error {
 		`SELECT id, name, mount, playlist_id, days_mask, start_minutes, end_minutes, enabled, created_at FROM schedules`,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("schedule: load query: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -101,7 +101,7 @@ func (m *Manager) load() error {
 		var createdAt string
 		var daysMask int
 		if err := rows.Scan(&s.ID, &s.Name, &s.Mount, &s.PlaylistID, &daysMask, &s.StartMinutes, &s.EndMinutes, &enabledInt, &createdAt); err != nil {
-			return err
+			return fmt.Errorf("schedule: load scan: %w", err)
 		}
 		s.DaysMask = uint8(daysMask & 0x7F)
 		s.Enabled = enabledInt != 0
@@ -225,7 +225,7 @@ func (m *Manager) Delete(id string) error {
 		return ErrNotFound
 	}
 	if _, err := m.db.Exec(`DELETE FROM schedules WHERE id=?`, id); err != nil {
-		return err
+		return fmt.Errorf("schedule: delete: %w", err)
 	}
 	delete(m.schedules, id)
 	return nil

@@ -84,7 +84,7 @@ func (r *Runner) Run(ctx context.Context) {
 	slog.Info("schedule: runner started", "tz", r.loc.String(), "tick", tickInterval)
 	// Fire once immediately so newly-active schedules are picked up without
 	// waiting a full tick (mostly relevant on boot after djm.Restore).
-	r.tick(time.Now().In(r.loc))
+	r.tick(ctx, time.Now().In(r.loc))
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -94,14 +94,14 @@ func (r *Runner) Run(ctx context.Context) {
 			slog.Info("schedule: runner stopped")
 			return
 		case t := <-ticker.C:
-			r.tick(t.In(r.loc))
+			r.tick(ctx, t.In(r.loc))
 		}
 	}
 }
 
 // tick reconciles djmanager state against the schedule set at the given
 // instant (already in the runner's timezone).
-func (r *Runner) tick(now time.Time) {
+func (r *Runner) tick(ctx context.Context, now time.Time) {
 	desired := r.desiredAssignments(now)
 
 	r.mu.Lock()
@@ -126,7 +126,7 @@ func (r *Runner) tick(now time.Time) {
 				continue
 			}
 		}
-		r.applyStart(now, mount, sched)
+		r.applyStart(ctx, now, mount, sched)
 	}
 
 	// 2. Stop mounts whose previously-owned schedule is no longer active.
@@ -160,7 +160,7 @@ func (r *Runner) desiredAssignments(now time.Time) map[string]*Schedule {
 	return out
 }
 
-func (r *Runner) applyStart(now time.Time, mount string, s *Schedule) {
+func (r *Runner) applyStart(ctx context.Context, now time.Time, mount string, s *Schedule) {
 	pl, err := r.playlists.Get(s.PlaylistID)
 	if err != nil {
 		r.emitSkipped(mount, s, "playlist not found")
@@ -199,7 +199,7 @@ func (r *Runner) applyStart(now time.Time, mount string, s *Schedule) {
 	}
 
 	jingle := r.dj.ResolveJingles(mount, byPath)
-	if err := r.dj.Start(context.Background(), mount, playlistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
+	if err := r.dj.Start(ctx, mount, playlistID, pl.LastPlayedPath, onTrackChange, tracks, mode, pl.CrossfadeMs, jingle); err != nil {
 		r.emitSkipped(mount, s, "dj start failed: "+err.Error())
 		slog.Error("schedule: dj.Start failed", "schedule", s.ID, "mount", mount, "err", err)
 		return

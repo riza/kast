@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,7 +91,8 @@ func buildTestEnv(t *testing.T) *testEnv {
 	require.NoError(t, err)
 	keys, err := apikey.NewManager(d)
 	require.NoError(t, err)
-	app := api.NewApp(cfg, "", auth, mounts, scanner, segmenter, src, pls, djm, ytm, nil, lsm, schedules, keys)
+	var logLevel slog.LevelVar
+	app := api.NewApp(cfg, "", auth, mounts, scanner, segmenter, src, pls, djm, ytm, nil, lsm, schedules, keys, &logLevel)
 	t.Cleanup(func() { app.Shutdown() }) //nolint:errcheck
 
 	return &testEnv{app: app, auth: auth, mounts: mounts, playlists: pls, keys: keys}

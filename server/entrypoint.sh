@@ -64,6 +64,10 @@ if [ -n "$KAST_TRUST_PROXY" ]; then
     sed -i "s|^trust_proxy = false|trust_proxy = true|" "$CONFIG"
 fi
 
+if [ -n "$KAST_PROXY_HEADER" ]; then
+    set_toml_string "proxy_header" "$KAST_PROXY_HEADER"
+fi
+
 if [ "$KAST_SSL_ENABLED" = "true" ]; then
     sed -i "s|^enabled = false|enabled = true|" "$CONFIG"
 fi

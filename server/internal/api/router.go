@@ -9,15 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
-	"github.com/phuslu/iploc"
 	"github.com/riza/kast/internal/api/handler"
+	"github.com/riza/kast/internal/api/hlsutil"
+	"github.com/riza/kast/internal/api/listener"
 	"github.com/riza/kast/internal/api/middleware"
 	"github.com/riza/kast/internal/api/respond"
 	"github.com/riza/kast/internal/apikey"
@@ -35,131 +35,15 @@ import (
 	"github.com/riza/kast/internal/ytimport"
 )
 
-// listenerTracker counts unique IPs actively requesting HLS content.
-type listenerTracker struct {
-	mu      sync.Mutex
-	entries map[string]map[string]listenerData // mountName -> IP -> data
-	ttl     time.Duration
-}
 
-type listenerData struct {
-	lastSeen  time.Time
-	userAgent string
-}
-
-func newListenerTracker(ttl time.Duration) *listenerTracker {
-	return &listenerTracker{
-		entries: make(map[string]map[string]listenerData),
-		ttl:     ttl,
-	}
-}
-
-func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
-	n, _ := lt.touchDebug(mountName, ip, userAgent)
-	return n
-}
-
-func (lt *listenerTracker) touchDebug(mountName, ip, userAgent string) (int, []string) {
-	// Always normalize through net.ParseIP so the stored key is the canonical
-	// dotted-decimal form. This catches homoglyph or invisible-character variants
-	// that visually match a real IP but have different byte representations.
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		slog.Error("listenerTracker: invalid IP reached touchDebug — guard bug",
-			"ip", ip, "ip_hex", fmt.Sprintf("%x", ip), "mount", mountName)
-		lt.mu.Lock()
-		keys := lt.snapshotKeys(mountName)
-		n := len(lt.entries[mountName])
-		lt.mu.Unlock()
-		return n, keys
-	}
-	normalIP := parsed.String()
-	if normalIP != ip {
-		slog.Warn("listenerTracker: IP normalized",
-			"raw", ip, "raw_hex", fmt.Sprintf("%x", ip), "normalized", normalIP, "mount", mountName)
-	}
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	if lt.entries[mountName] == nil {
-		lt.entries[mountName] = make(map[string]listenerData)
-	}
-	lt.entries[mountName][normalIP] = listenerData{lastSeen: time.Now(), userAgent: userAgent}
-	cutoff := time.Now().Add(-lt.ttl)
-	for k, v := range lt.entries[mountName] {
-		if v.lastSeen.Before(cutoff) {
-			delete(lt.entries[mountName], k)
-		}
-	}
-	return len(lt.entries[mountName]), lt.snapshotKeys(mountName)
-}
-
-// snapshotKeys returns all current keys for mountName; must be called with lt.mu held.
-func (lt *listenerTracker) snapshotKeys(mountName string) []string {
-	keys := make([]string, 0, len(lt.entries[mountName]))
-	for k := range lt.entries[mountName] {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-type listenerEntry struct {
-	IP          string    `json:"ip"`
-	Mount       string    `json:"mount"`
-	LastSeen    time.Time `json:"last_seen"`
-	CountryCode string    `json:"country_code"`
-	UserAgent   string    `json:"user_agent"`
-}
-
-// all returns every active listener across all mounts, expiring stale entries.
-func (lt *listenerTracker) all() []listenerEntry {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	cutoff := time.Now().Add(-lt.ttl)
-	var out []listenerEntry
-	for mount, ips := range lt.entries {
-		for ip, d := range ips {
-			if d.lastSeen.Before(cutoff) {
-				delete(ips, ip)
-				continue
-			}
-			parsed := net.ParseIP(ip)
-			if parsed == nil {
-				slog.Error("listenerTracker.all: invalid IP key found — evicting",
-					"ip", ip, "ip_hex", fmt.Sprintf("%x", ip), "mount", mount)
-				delete(ips, ip)
-				continue
-			}
-			e := listenerEntry{IP: ip, Mount: mount, LastSeen: d.lastSeen, UserAgent: d.userAgent}
-			e.CountryCode = iploc.Country(parsed)
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// sweep expires stale entries and returns a map of mountName → current count.
-func (lt *listenerTracker) sweep() map[string]int {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	cutoff := time.Now().Add(-lt.ttl)
-	counts := make(map[string]int, len(lt.entries))
-	for mount, ips := range lt.entries {
-		for k, v := range ips {
-			if v.lastSeen.Before(cutoff) {
-				delete(ips, k)
-				continue
-			}
-			if net.ParseIP(k) == nil {
-				slog.Error("listenerTracker.sweep: invalid IP key found — evicting",
-					"ip", k, "ip_hex", fmt.Sprintf("%x", k), "mount", mount)
-				delete(ips, k)
-				continue
-			}
-		}
-		counts[mount] = len(ips)
-	}
-	return counts
-}
+const (
+	maxUploadBytes = 500 << 20        // 500 MB multipart upload limit
+	listenerTTL    = 30 * time.Second // HLS listener sliding window
+	sweepInterval  = 5 * time.Second  // listener count refresh rate
+	hlsRateLimit   = 300              // max HLS requests per IP per minute
+	apiRateLimit   = 200              // max API requests per IP per minute
+	loginRateLimit = 10               // max login attempts per IP per minute
+)
 
 // NewApp builds and returns the Fiber application.
 func NewApp(
@@ -182,7 +66,7 @@ func NewApp(
 	fiberCfg := fiber.Config{
 		AppName:               "Kast",
 		DisableStartupMessage: true,
-		BodyLimit:             500 * 1024 * 1024, // 500 MB for uploads
+		BodyLimit:             maxUploadBytes,
 		ReadTimeout:           10 * time.Minute,
 		WriteTimeout:          0,
 		IdleTimeout:           120 * time.Second,
@@ -209,17 +93,17 @@ func NewApp(
 	app.Use(middleware.CORS(cfg.Server.CORSOrigins))
 
 	// ── HLS streaming — unauthenticated, high-volume ─────────────────────────
-	listenerTrack := newListenerTracker(30 * time.Second)
+	listenerTrack := listener.New(listenerTTL)
 
 	// Background sweep: expire stale entries and push counts to every mount.
 	// Iterating all mounts (not just those in the tracker) ensures a mount
 	// with no recent requests gets written as 0, not left at a stale value.
 	prevCounts := make(map[string]int)
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(sweepInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			counts := listenerTrack.sweep()
+			counts := listenerTrack.Sweep()
 			for _, mt := range mounts.List() {
 				n := counts[mt.Name]
 				mounts.SetListeners(mt.Name, n)
@@ -235,7 +119,7 @@ func NewApp(
 	}()
 
 	app.Get("/hls/:mount/*", limiter.New(limiter.Config{
-		Max:        300,
+		Max:        hlsRateLimit,
 		Expiration: time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
@@ -261,7 +145,7 @@ func NewApp(
 			// non-IP junk (JSON fragments, scheme strings, country codes).
 			// Skip the bookkeeping when the value isn't a real IP.
 			if net.ParseIP(ip) != nil {
-				count, keys := listenerTrack.touchDebug("/"+mountName, ip, c.Get("User-Agent"))
+				count, keys := listenerTrack.TouchDebug("/"+mountName, ip, c.Get("User-Agent"))
 				mounts.SetListeners("/"+mountName, count)
 				slog.Debug("hls: listener touch",
 					"mount", mountName,
@@ -293,8 +177,8 @@ func NewApp(
 			if msnStr != "" && partStr != "" {
 				t := djm.Trackers.Get(dir)
 				if t != nil {
-					wantMSN, errMSN := parseInt(msnStr)
-					wantPart, errPart := parseInt(partStr)
+					wantMSN, errMSN := hlsutil.ParseInt(msnStr)
+					wantPart, errPart := hlsutil.ParseInt(partStr)
 					if errMSN == nil && errPart == nil {
 						t.WaitFor(wantMSN, wantPart)
 					}
@@ -310,7 +194,7 @@ func NewApp(
 		// Inject LL-HLS server control header into playlist responses.
 		if filePath == "index.m3u8" {
 			if mt, err := mounts.Get("/" + mountName); err == nil && mt.Protocol == "LL-HLS" {
-				return servePlaylistWithLLHeaders(c, fullPath)
+				return hlsutil.ServePlaylistWithLLHeaders(c, fullPath)
 			}
 		}
 
@@ -330,134 +214,10 @@ func NewApp(
 	ph := &handler.Player{Manager: mounts}
 	pub.Get("/player/:mount", ph.ServeHTTP)
 
-	pub.Get("/public/:mount", func(c *fiber.Ctx) error {
-		mountName := "/" + c.Params("mount")
-		mt, err := mounts.Get(mountName)
-		if err != nil {
-			return respond.Error(c, fiber.StatusNotFound, "mount not found")
-		}
-		t := djm.NowPlaying(mountName)
-		type nowPlayingInfo struct {
-			Title      string `json:"title"`
-			Artist     string `json:"artist"`
-			Album      string `json:"album"`
-			DurationMs int64  `json:"duration_ms"`
-		}
-		type publicMount struct {
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			Genre       string          `json:"genre"`
-			Website     string          `json:"website"`
-			Protocol    string          `json:"protocol"`
-			Codec       string          `json:"codec"`
-			Bitrate     string          `json:"bitrate"`
-			Status      string          `json:"status"`
-			Listeners   int             `json:"listeners"`
-			NowPlaying  *nowPlayingInfo `json:"now_playing"`
-			// Player config
-			PlayerStationName  string `json:"player_station_name"`
-			PlayerAccent       string `json:"player_accent"`
-			PlayerAccentSoft   string `json:"player_accent_soft"`
-			PlayerTheme        string `json:"player_theme"`
-			PlayerLayout       string `json:"player_layout"`
-			PlayerAmbient      bool   `json:"player_ambient"`
-			PlayerShowAbout    bool   `json:"player_show_about"`
-			PlayerShowHistory  bool   `json:"player_show_history"`
-			PlayerShowPlaylist bool   `json:"player_show_playlist"`
-		}
-		resp := publicMount{
-			Name:               mt.Name,
-			Description:        mt.Description,
-			Genre:              mt.Genre,
-			Website:            mt.Website,
-			Protocol:           mt.Protocol,
-			Codec:              mt.Codec,
-			Bitrate:            mt.Bitrate,
-			Status:             string(mt.Status),
-			Listeners:          mt.Listeners,
-			PlayerStationName:  mt.PlayerStationName,
-			PlayerAccent:       mt.PlayerAccent,
-			PlayerAccentSoft:   mt.PlayerAccentSoft,
-			PlayerTheme:        mt.PlayerTheme,
-			PlayerLayout:       mt.PlayerLayout,
-			PlayerAmbient:      mt.PlayerAmbient,
-			PlayerShowAbout:    mt.PlayerShowAbout,
-			PlayerShowHistory:  mt.PlayerShowHistory,
-			PlayerShowPlaylist: mt.PlayerShowPlaylist,
-		}
-		if t != nil {
-			resp.NowPlaying = &nowPlayingInfo{
-				Title:      t.Title,
-				Artist:     t.Artist,
-				Album:      t.Album,
-				DurationMs: t.DurationMs,
-			}
-		}
-		return respond.OK(c, resp)
-	})
-
-	pub.Get("/public/:mount/history", func(c *fiber.Ctx) error {
-		mountName := "/" + c.Params("mount")
-		if _, err := mounts.Get(mountName); err != nil {
-			return respond.Error(c, fiber.StatusNotFound, "mount not found")
-		}
-		tracks := djm.RecentTracks(mountName)
-		type trackInfo struct {
-			Title      string `json:"title"`
-			Artist     string `json:"artist"`
-			Album      string `json:"album"`
-			DurationMs int64  `json:"duration_ms"`
-		}
-		out := make([]trackInfo, 0, len(tracks))
-		for _, t := range tracks {
-			out = append(out, trackInfo{Title: t.Title, Artist: t.Artist, Album: t.Album, DurationMs: t.DurationMs})
-		}
-		return respond.OK(c, out)
-	})
-
-	pub.Get("/public/:mount/playlist", func(c *fiber.Ctx) error {
-		mountName := "/" + c.Params("mount")
-		if _, err := mounts.Get(mountName); err != nil {
-			return respond.Error(c, fiber.StatusNotFound, "mount not found")
-		}
-		sess := djm.GetSession(mountName)
-		if sess == nil {
-			return respond.OK(c, []struct{}{})
-		}
-		pl, err := playlists.Get(sess.PlaylistID)
-		if err != nil {
-			return respond.OK(c, []struct{}{})
-		}
-		allTracks := scanner.Tracks()
-		byPath := make(map[string]struct {
-			Title, Artist, Album string
-			DurationMs           int64
-		}, len(allTracks))
-		for _, t := range allTracks {
-			byPath[t.Path] = struct {
-				Title, Artist, Album string
-				DurationMs           int64
-			}{t.Title, t.Artist, t.Album, t.DurationMs}
-		}
-		type trackInfo struct {
-			Title      string `json:"title"`
-			Artist     string `json:"artist"`
-			Album      string `json:"album"`
-			DurationMs int64  `json:"duration_ms"`
-		}
-		out := make([]trackInfo, 0, len(pl.TrackPaths))
-		for _, path := range pl.TrackPaths {
-			if t, ok := byPath[path]; ok {
-				out = append(out, trackInfo{Title: t.Title, Artist: t.Artist, Album: t.Album, DurationMs: t.DurationMs})
-			}
-		}
-		type playlistResp struct {
-			Name   string      `json:"name"`
-			Mode   string      `json:"mode"`
-			Tracks []trackInfo `json:"tracks"`
-		}
-		return respond.OK(c, playlistResp{Name: pl.Name, Mode: pl.Mode, Tracks: out})
-	})
+	pubh := &handler.Public{Mounts: mounts, DJManager: djm, Playlists: playlists, Scanner: scanner}
+	pub.Get("/public/:mount", pubh.Mount)
+	pub.Get("/public/:mount/history", pubh.History)
+	pub.Get("/public/:mount/playlist", pubh.Playlist)
 
 	// ── Source input — authenticated PUT ────────────────────────────────────
 	app.Put("/source/:mount", func(c *fiber.Ctx) error {
@@ -486,7 +246,7 @@ func NewApp(
 		SecureCookies: cfg.SSL.Enabled || cfg.Admin.SecureCookies,
 	}
 	loginLimiter := limiter.New(limiter.Config{
-		Max:        10,
+		Max:        loginRateLimit,
 		Expiration: time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
@@ -499,7 +259,7 @@ func NewApp(
 
 	// ── Admin API — Bearer token required ───────────────────────────────────
 	api := app.Group("/api", limiter.New(limiter.Config{
-		Max:        200,
+		Max:        apiRateLimit,
 		Expiration: time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
@@ -534,9 +294,9 @@ func NewApp(
 	api.Delete("/server/reset", adminOnly, svh.FactoryReset)
 
 	api.Get("/listeners", func(c *fiber.Ctx) error {
-		entries := listenerTrack.all()
+		entries := listenerTrack.All()
 		if entries == nil {
-			entries = []listenerEntry{}
+			entries = []listener.Entry{}
 		}
 		return respond.OK(c, entries)
 	})
@@ -646,39 +406,3 @@ func extractBearer(c *fiber.Ctx) string {
 	return ""
 }
 
-func parseInt(s string) (int, error) {
-	n := 0
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return 0, fmt.Errorf("not a number")
-		}
-		n = n*10 + int(ch-'0')
-	}
-	return n, nil
-}
-
-// servePlaylistWithLLHeaders reads an HLS playlist file, injects the
-// EXT-X-SERVER-CONTROL tag required for LL-HLS blocking reload (if not
-// already present), and writes the result to the response.
-func servePlaylistWithLLHeaders(c *fiber.Ctx, path string) error {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
-	}
-
-	const serverControl = "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.6\n"
-	body := string(data)
-
-	if !contains(body, "#EXT-X-SERVER-CONTROL") {
-		// Insert after the #EXTM3U line.
-		body = strings.Replace(body, "#EXTM3U\n", "#EXTM3U\n"+serverControl, 1)
-	}
-
-	c.Set("Content-Type", "application/vnd.apple.mpegurl")
-	c.Set("Cache-Control", "no-cache")
-	return c.SendString(body)
-}
-
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
-}

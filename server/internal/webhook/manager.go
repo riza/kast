@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const webhookHTTPTimeout = 10 * time.Second
 
 // ValidEvents is the set of event names Kast can emit.
 var ValidEvents = map[string]bool{
@@ -84,7 +87,7 @@ func NewManager(db *sql.DB) (*Manager, error) {
 	m := &Manager{
 		webhooks: make(map[string]*Webhook),
 		db:       db,
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   &http.Client{Timeout: webhookHTTPTimeout},
 	}
 	if err := m.load(); err != nil {
 		return nil, err
@@ -97,7 +100,7 @@ func (m *Manager) load() error {
 		`SELECT id, url, events, secret, enabled, created_at FROM webhooks`,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("webhook: load query: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -106,9 +109,11 @@ func (m *Manager) load() error {
 		var enabledInt int
 		var createdAt string
 		if err := rows.Scan(&wh.ID, &wh.URL, &eventsJSON, &wh.Secret, &enabledInt, &createdAt); err != nil {
-			return err
+			return fmt.Errorf("webhook: load scan: %w", err)
 		}
-		_ = json.Unmarshal([]byte(eventsJSON), &wh.Events)
+		if err := json.Unmarshal([]byte(eventsJSON), &wh.Events); err != nil {
+			slog.Warn("webhook: load: corrupt events JSON", "id", wh.ID, "err", err)
+		}
 		wh.Enabled = enabledInt != 0
 		wh.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		m.webhooks[wh.ID] = &wh
@@ -233,7 +238,7 @@ func (m *Manager) Delete(id string) error {
 		return ErrNotFound
 	}
 	if _, err := m.db.Exec(`DELETE FROM webhooks WHERE id=?`, id); err != nil {
-		return err
+		return fmt.Errorf("webhook: delete: %w", err)
 	}
 	delete(m.webhooks, id)
 	return nil

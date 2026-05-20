@@ -210,8 +210,8 @@ func (m *Manager) StartImport(items []*Item) string {
 // GetJob returns a snapshot of the job or nil if not found.
 func (m *Manager) GetJob(id string) *Job {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	j := m.jobs[id]
-	m.mu.RUnlock()
 	if j == nil {
 		return nil
 	}
@@ -311,7 +311,9 @@ func (m *Manager) downloadItem(job *Job, item *Item) error {
 	outTpl := filepath.Join(m.outputDir, "%(title)s.%(ext)s")
 
 	// #nosec G204 — videoURL is constructed from a validated YouTube ID; no shell expansion.
-	cmd := exec.CommandContext(context.Background(),
+	dlCtx, dlCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer dlCancel()
+	cmd := exec.CommandContext(dlCtx,
 		"yt-dlp",
 		"-x",
 		"--audio-format", "mp3",

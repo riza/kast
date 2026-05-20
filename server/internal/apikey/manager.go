@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -287,10 +288,8 @@ func (m *Manager) Lookup(rawKey string) (*APIKey, error) {
 		return nil, ErrExpired
 	}
 
-	// Update last_used_at asynchronously to avoid blocking auth.
+	cp := *k // copy before goroutine can write k.LastUsedAt
 	go m.touchLastUsed(k.ID)
-
-	cp := *k
 	return &cp, nil
 }
 
@@ -394,7 +393,9 @@ func scanRow(rows scanner) (*APIKey, string, error) {
 	}
 
 	var allowlist []string
-	_ = json.Unmarshal([]byte(allowlistJSON), &allowlist)
+	if err := json.Unmarshal([]byte(allowlistJSON), &allowlist); err != nil {
+		slog.Warn("apikey: load: corrupt allowlist JSON", "id", id, "err", err)
+	}
 	if allowlist == nil {
 		allowlist = []string{}
 	}

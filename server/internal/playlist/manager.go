@@ -170,7 +170,10 @@ func (m *Manager) SetLastPlayed(id, path string) error {
 	}
 	p.LastPlayedPath = path
 	_, err := m.db.Exec("UPDATE playlists SET last_played_path = ? WHERE id = ?", path, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("playlist: set last played: %w", err)
+	}
+	return nil
 }
 
 // Delete removes a playlist by ID.
@@ -199,7 +202,10 @@ func (m *Manager) insertDB(p *Playlist) error {
 		p.CreatedAt.UTC().Format(time.RFC3339),
 		p.UpdatedAt.UTC().Format(time.RFC3339),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("playlist: insert: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) updateDB(p *Playlist) error {
@@ -213,7 +219,10 @@ func (m *Manager) updateDB(p *Playlist) error {
 		p.UpdatedAt.UTC().Format(time.RFC3339),
 		p.ID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("playlist: update: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) load() error {
@@ -238,7 +247,9 @@ func (m *Manager) load() error {
 		); err != nil {
 			return fmt.Errorf("playlist: load scan: %w", err)
 		}
-		_ = json.Unmarshal([]byte(pathsJSON), &p.TrackPaths)
+		if err := json.Unmarshal([]byte(pathsJSON), &p.TrackPaths); err != nil {
+			slog.Warn("playlist: load: corrupt track paths JSON", "id", p.ID, "err", err)
+		}
 		if p.TrackPaths == nil {
 			p.TrackPaths = []string{}
 		}
