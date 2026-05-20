@@ -199,7 +199,9 @@ func NewApp(
 		// Playlist files are fetched immediately on page load and frequently
 		// during playback; segments are only fetched by clients actively playing.
 		if filePath != "index.m3u8" && filePath != "init.mp4" {
-			ip := c.IP()
+			rawIP := c.IP()
+			xff := c.Get("X-Forwarded-For")
+			ip := rawIP
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
 			}
@@ -210,6 +212,22 @@ func NewApp(
 			if net.ParseIP(ip) != nil {
 				count := listenerTrack.touch("/"+mountName, ip, c.Get("User-Agent"))
 				mounts.SetListeners("/"+mountName, count)
+				slog.Debug("hls: listener touch",
+					"mount", mountName,
+					"ip", ip,
+					"raw_ip", rawIP,
+					"xff", xff,
+					"file", filePath,
+					"listeners", count,
+					"user_agent", c.Get("User-Agent"),
+				)
+			} else {
+				slog.Debug("hls: rejected non-IP",
+					"mount", mountName,
+					"raw_ip", rawIP,
+					"xff", xff,
+					"file", filePath,
+				)
 			}
 		}
 		fullPath := filepath.Join(dir, filepath.Clean("/"+filePath))
@@ -488,6 +506,17 @@ func NewApp(
 		}
 		return respond.OK(c, fiber.Map{"status": "ok"})
 	})
+	api.Put("/mounts/:name/jingles", func(c *fiber.Ctx) error {
+		mountName := "/" + c.Params("name")
+		var cfg mount.JingleConfigUpdate
+		if err := c.BodyParser(&cfg); err != nil {
+			return respond.Error(c, fiber.StatusBadRequest, "invalid JSON")
+		}
+		if err := mounts.UpdateJingleConfig(mountName, cfg); err != nil {
+			return respond.Error(c, fiber.StatusNotFound, "mount not found")
+		}
+		return respond.OK(c, fiber.Map{"status": "ok"})
+	})
 	api.Post("/mounts/:name/autodj", djh.Start)
 	api.Get("/mounts/:name/autodj", djh.Status)
 	api.Delete("/mounts/:name/autodj", djh.Stop)
@@ -511,6 +540,7 @@ func NewApp(
 
 	api.Get("/library", lh.List)
 	api.Patch("/library/:id", lh.Update)
+	api.Delete("/library/:id/override", lh.ResetOverride)
 	api.Post("/library/scan", lh.Scan)
 	api.Post("/library/upload", lh.Upload)
 	api.Post("/library/import/youtube/preview", yth.Preview)
