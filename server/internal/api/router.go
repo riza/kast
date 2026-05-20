@@ -55,6 +55,11 @@ func newListenerTracker(ttl time.Duration) *listenerTracker {
 }
 
 func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
+	n, _ := lt.touchDebug(mountName, ip, userAgent)
+	return n
+}
+
+func (lt *listenerTracker) touchDebug(mountName, ip, userAgent string) (int, []string) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	if lt.entries[mountName] == nil {
@@ -67,7 +72,11 @@ func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
 			delete(lt.entries[mountName], k)
 		}
 	}
-	return len(lt.entries[mountName])
+	keys := make([]string, 0, len(lt.entries[mountName]))
+	for k := range lt.entries[mountName] {
+		keys = append(keys, k)
+	}
+	return len(lt.entries[mountName]), keys
 }
 
 type listenerEntry struct {
@@ -212,7 +221,7 @@ func NewApp(
 			// non-IP junk (JSON fragments, scheme strings, country codes).
 			// Skip the bookkeeping when the value isn't a real IP.
 			if net.ParseIP(ip) != nil {
-				count := listenerTrack.touch("/"+mountName, ip, c.Get("User-Agent"))
+				count, keys := listenerTrack.touchDebug("/"+mountName, ip, c.Get("User-Agent"))
 				mounts.SetListeners("/"+mountName, count)
 				slog.Debug("hls: listener touch",
 					"mount", mountName,
@@ -221,6 +230,7 @@ func NewApp(
 					"xff", xff,
 					"file", filePath,
 					"listeners", count,
+					"map_keys", keys,
 					"user_agent", c.Get("User-Agent"),
 				)
 			} else {
