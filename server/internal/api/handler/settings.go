@@ -29,6 +29,7 @@ type SettingsBody struct {
 	HTTPAddr           string   `json:"http_addr"`
 	CORSOrigins        []string `json:"cors_origins"`
 	TrustProxy         bool     `json:"trust_proxy"`
+	ProxyHeader        string   `json:"proxy_header"`
 	SSLEnabled         bool     `json:"ssl_enabled"`
 	SSLAutoCert        bool     `json:"ssl_auto_cert"`
 	SSLDomains         []string `json:"ssl_domains"`
@@ -48,6 +49,7 @@ func (h *Settings) toBody() SettingsBody {
 		HTTPAddr:           h.Cfg.Server.HTTPAddr,
 		CORSOrigins:        h.Cfg.Server.CORSOrigins,
 		TrustProxy:         h.Cfg.Server.TrustProxy,
+		ProxyHeader:        h.Cfg.Server.ProxyHeader,
 		SSLEnabled:         h.Cfg.SSL.Enabled,
 		SSLAutoCert:        h.Cfg.SSL.AutoCert,
 		SSLDomains:         h.Cfg.SSL.Domains,
@@ -124,6 +126,9 @@ func (h *Settings) Update(c *fiber.Ctx) error {
 		h.Cfg.Server.CORSOrigins = body.CORSOrigins
 	}
 	h.Cfg.Server.TrustProxy = body.TrustProxy
+	if body.ProxyHeader != "" {
+		h.Cfg.Server.ProxyHeader = body.ProxyHeader
+	}
 	h.Cfg.Server.Timezone = body.Timezone
 	h.Cfg.SSL.Enabled = body.SSLEnabled
 	h.Cfg.SSL.AutoCert = body.SSLAutoCert

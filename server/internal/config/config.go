@@ -28,10 +28,14 @@ type ServerConfig struct {
 	HTTPAddr    string   `toml:"http_addr"`
 	PublicURL   string   `toml:"public_url"`
 	CORSOrigins []string `toml:"cors_origins"`
-	// TrustProxy enables reading the real client IP from the X-Forwarded-For
-	// header. Set to true when running behind a reverse proxy (nginx, Caddy,
-	// Traefik). Leave false for direct (non-proxied) deployments.
-	TrustProxy    bool     `toml:"trust_proxy"`
+	// TrustProxy enables reading the real client IP from a proxy header.
+	// Set to true when running behind a reverse proxy (nginx, Caddy, Traefik,
+	// Cloudflare Tunnel). Leave false for direct (non-proxied) deployments.
+	TrustProxy bool `toml:"trust_proxy"`
+	// ProxyHeader is the HTTP header used to read the real client IP when
+	// TrustProxy is true. Defaults to "X-Forwarded-For". Set to
+	// "CF-Connecting-IP" for Cloudflare setups to avoid spoofed XFF values.
+	ProxyHeader string `toml:"proxy_header"`
 	Timezone      string   `toml:"timezone"`
 	AdminAllowlist []string `toml:"admin_allowlist"`
 }
@@ -111,6 +115,9 @@ func (c *Config) validate() error {
 	}
 	if c.Server.HTTPAddr == "" {
 		c.Server.HTTPAddr = ":8080"
+	}
+	if c.Server.ProxyHeader == "" {
+		c.Server.ProxyHeader = "X-Forwarded-For"
 	}
 	if c.Server.Timezone == "" {
 		c.Server.Timezone = "UTC"

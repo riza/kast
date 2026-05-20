@@ -189,10 +189,15 @@ func NewApp(
 		StreamRequestBody:     true,
 	}
 	if cfg.Server.TrustProxy {
-		// When running behind a reverse proxy (nginx, Caddy, Traefik, etc.),
-		// use the X-Forwarded-For header for the real client IP instead of
-		// the Docker gateway IP seen on the raw connection.
-		fiberCfg.ProxyHeader = fiber.HeaderXForwardedFor
+		// When running behind a reverse proxy, use the configured proxy header
+		// for the real client IP. Defaults to X-Forwarded-For; set to
+		// CF-Connecting-IP for Cloudflare setups to avoid spoofed XFF values.
+		fiberCfg.ProxyHeader = cfg.Server.ProxyHeader
+		// EnableIPValidation makes Fiber parse comma-separated values in the
+		// proxy header and skip any token that is not a valid IP address.
+		// Without this, c.IP() returns the raw header string verbatim (even if
+		// it contains non-IP garbage like country codes or JSON fragments).
+		fiberCfg.EnableIPValidation = true
 	}
 	app := fiber.New(fiberCfg)
 
