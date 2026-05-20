@@ -60,6 +60,18 @@ func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
 }
 
 func (lt *listenerTracker) touchDebug(mountName, ip, userAgent string) (int, []string) {
+	// Defensive guard: never store non-IP strings regardless of caller.
+	if net.ParseIP(ip) == nil {
+		slog.Error("listenerTracker: invalid IP reached touchDebug — guard bug", "ip", ip, "mount", mountName)
+		lt.mu.Lock()
+		keys := make([]string, 0, len(lt.entries[mountName]))
+		for k := range lt.entries[mountName] {
+			keys = append(keys, k)
+		}
+		n := len(lt.entries[mountName])
+		lt.mu.Unlock()
+		return n, keys
+	}
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	if lt.entries[mountName] == nil {
@@ -221,8 +233,8 @@ func NewApp(
 			// non-IP junk (JSON fragments, scheme strings, country codes).
 			// Skip the bookkeeping when the value isn't a real IP.
 			if net.ParseIP(ip) != nil {
-				count, keys := listenerTrack.touchDebug(mountName, ip, c.Get("User-Agent"))
-				mounts.SetListeners(mountName, count)
+				count, keys := listenerTrack.touchDebug("/"+mountName, ip, c.Get("User-Agent"))
+				mounts.SetListeners("/"+mountName, count)
 				slog.Debug("hls: listener touch",
 					"mount", mountName,
 					"ip", ip,
@@ -230,7 +242,7 @@ func NewApp(
 					"xff", xff,
 					"file", filePath,
 					"listeners", count,
-					"map_keys", keys,
+					"map_keys", fmt.Sprintf("%q", keys),
 					"user_agent", c.Get("User-Agent"),
 				)
 			} else {
