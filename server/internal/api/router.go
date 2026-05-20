@@ -60,35 +60,46 @@ func (lt *listenerTracker) touch(mountName, ip, userAgent string) int {
 }
 
 func (lt *listenerTracker) touchDebug(mountName, ip, userAgent string) (int, []string) {
-	// Defensive guard: never store non-IP strings regardless of caller.
-	if net.ParseIP(ip) == nil {
-		slog.Error("listenerTracker: invalid IP reached touchDebug — guard bug", "ip", ip, "mount", mountName)
+	// Always normalize through net.ParseIP so the stored key is the canonical
+	// dotted-decimal form. This catches homoglyph or invisible-character variants
+	// that visually match a real IP but have different byte representations.
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		slog.Error("listenerTracker: invalid IP reached touchDebug — guard bug",
+			"ip", ip, "ip_hex", fmt.Sprintf("%x", ip), "mount", mountName)
 		lt.mu.Lock()
-		keys := make([]string, 0, len(lt.entries[mountName]))
-		for k := range lt.entries[mountName] {
-			keys = append(keys, k)
-		}
+		keys := lt.snapshotKeys(mountName)
 		n := len(lt.entries[mountName])
 		lt.mu.Unlock()
 		return n, keys
+	}
+	normalIP := parsed.String()
+	if normalIP != ip {
+		slog.Warn("listenerTracker: IP normalized",
+			"raw", ip, "raw_hex", fmt.Sprintf("%x", ip), "normalized", normalIP, "mount", mountName)
 	}
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	if lt.entries[mountName] == nil {
 		lt.entries[mountName] = make(map[string]listenerData)
 	}
-	lt.entries[mountName][ip] = listenerData{lastSeen: time.Now(), userAgent: userAgent}
+	lt.entries[mountName][normalIP] = listenerData{lastSeen: time.Now(), userAgent: userAgent}
 	cutoff := time.Now().Add(-lt.ttl)
 	for k, v := range lt.entries[mountName] {
 		if v.lastSeen.Before(cutoff) {
 			delete(lt.entries[mountName], k)
 		}
 	}
+	return len(lt.entries[mountName]), lt.snapshotKeys(mountName)
+}
+
+// snapshotKeys returns all current keys for mountName; must be called with lt.mu held.
+func (lt *listenerTracker) snapshotKeys(mountName string) []string {
 	keys := make([]string, 0, len(lt.entries[mountName]))
 	for k := range lt.entries[mountName] {
 		keys = append(keys, k)
 	}
-	return len(lt.entries[mountName]), keys
+	return keys
 }
 
 type listenerEntry struct {
@@ -111,10 +122,15 @@ func (lt *listenerTracker) all() []listenerEntry {
 				delete(ips, ip)
 				continue
 			}
-			e := listenerEntry{IP: ip, Mount: mount, LastSeen: d.lastSeen, UserAgent: d.userAgent}
-			if parsed := net.ParseIP(ip); parsed != nil {
-				e.CountryCode = iploc.Country(parsed)
+			parsed := net.ParseIP(ip)
+			if parsed == nil {
+				slog.Error("listenerTracker.all: invalid IP key found — evicting",
+					"ip", ip, "ip_hex", fmt.Sprintf("%x", ip), "mount", mount)
+				delete(ips, ip)
+				continue
 			}
+			e := listenerEntry{IP: ip, Mount: mount, LastSeen: d.lastSeen, UserAgent: d.userAgent}
+			e.CountryCode = iploc.Country(parsed)
 			out = append(out, e)
 		}
 	}
@@ -131,6 +147,13 @@ func (lt *listenerTracker) sweep() map[string]int {
 		for k, v := range ips {
 			if v.lastSeen.Before(cutoff) {
 				delete(ips, k)
+				continue
+			}
+			if net.ParseIP(k) == nil {
+				slog.Error("listenerTracker.sweep: invalid IP key found — evicting",
+					"ip", k, "ip_hex", fmt.Sprintf("%x", k), "mount", mount)
+				delete(ips, k)
+				continue
 			}
 		}
 		counts[mount] = len(ips)
