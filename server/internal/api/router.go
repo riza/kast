@@ -221,8 +221,8 @@ func NewApp(
 			// non-IP junk (JSON fragments, scheme strings, country codes).
 			// Skip the bookkeeping when the value isn't a real IP.
 			if net.ParseIP(ip) != nil {
-				count, keys := listenerTrack.touchDebug("/"+mountName, ip, c.Get("User-Agent"))
-				mounts.SetListeners("/"+mountName, count)
+				count, keys := listenerTrack.touchDebug(mountName, ip, c.Get("User-Agent"))
+				mounts.SetListeners(mountName, count)
 				slog.Debug("hls: listener touch",
 					"mount", mountName,
 					"ip", ip,
