@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -18,6 +19,7 @@ import (
 type Settings struct {
 	Cfg        *config.Config
 	ConfigPath string
+	LogLevel   *slog.LevelVar
 	mu         sync.Mutex
 }
 
@@ -57,6 +59,19 @@ func (h *Settings) toBody() SettingsBody {
 		LogFormat:          h.Cfg.Log.Format,
 		Timezone:           h.Cfg.Server.Timezone,
 		AdminAllowlist:     h.Cfg.Server.AdminAllowlist,
+	}
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
 }
 
@@ -121,6 +136,9 @@ func (h *Settings) Update(c *fiber.Ctx) error {
 	h.Cfg.HLS.PlaylistSize = body.HLSPlaylistSize
 	h.Cfg.Log.Level = body.LogLevel
 	h.Cfg.Log.Format = body.LogFormat
+	if h.LogLevel != nil {
+		h.LogLevel.Set(parseLogLevel(body.LogLevel))
+	}
 	if body.AdminAllowlist != nil {
 		for _, cidr := range body.AdminAllowlist {
 			entry := cidr

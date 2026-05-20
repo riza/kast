@@ -133,6 +133,7 @@ func NewApp(
 	lsm *livesource.Manager,
 	schedules *schedule.Manager,
 	keys *apikey.Manager,
+	logLevel *slog.LevelVar,
 ) *fiber.App {
 	fiberCfg := fiber.Config{
 		AppName:               "Kast",
@@ -469,7 +470,7 @@ func NewApp(
 	lh   := &handler.Library{Scanner: scanner, UploadDir: scanner.PrimaryUploadDir()}
 	plh  := &handler.Playlists{Manager: playlists, Webhooks: webhooks}
 	djh  := &handler.AutoDJ{DJManager: djm, Playlists: playlists, Scanner: scanner, Webhooks: webhooks}
-	sh   := &handler.Settings{Cfg: cfg, ConfigPath: configPath}
+	sh   := &handler.Settings{Cfg: cfg, ConfigPath: configPath, LogLevel: logLevel}
 	svh  := &handler.Server{ConfigPath: configPath, DataDir: "./data"}
 	whep := &handler.WHEP{Manager: djm.WebRTC}
 	yth  := &handler.YTImport{Manager: ytm}

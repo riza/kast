@@ -59,7 +59,7 @@ func run() error {
 		return err
 	}
 
-	setupLogger(cfg.Log.Level, cfg.Log.Format)
+	logLevel := setupLogger(cfg.Log.Level, cfg.Log.Format)
 	slog.Info("kast starting", "version", "0.1.0")
 
 	// ── Storage directories ──────────────────────────────────────────────────
@@ -136,7 +136,7 @@ func run() error {
 	}
 
 	// ── Fiber app ────────────────────────────────────────────────────────────
-	app := api.NewApp(cfg, *cfgPath, auth, mounts, scanner, segmenter, src, playlists, djm, ytm, webhooks, lsm, schedules, keys)
+	app := api.NewApp(cfg, *cfgPath, auth, mounts, scanner, segmenter, src, playlists, djm, ytm, webhooks, lsm, schedules, keys, logLevel)
 
 	// rootCtx scopes long-lived background tasks (scheduler runner) so they
 	// stop cleanly before djm.StopAll() runs.
@@ -257,19 +257,10 @@ func startHTTPRedirect(addr string, domains []string) {
 	}
 }
 
-func setupLogger(level, format string) {
-	var lvl slog.Level
-	switch level {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	opts := &slog.HandlerOptions{Level: lvl}
+func setupLogger(level, format string) *slog.LevelVar {
+	var lv slog.LevelVar
+	lv.Set(parseLogLevel(level))
+	opts := &slog.HandlerOptions{Level: &lv}
 	var h slog.Handler
 	if format == "json" {
 		h = slog.NewJSONHandler(os.Stdout, opts)
@@ -277,4 +268,18 @@ func setupLogger(level, format string) {
 		h = slog.NewTextHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))
+	return &lv
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
