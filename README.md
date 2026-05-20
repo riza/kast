@@ -177,17 +177,6 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 3. Commit your changes
 4. Push to the branch and open a Pull Request
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Server | Go 1.25, Fiber v2, ffmpeg |
-| Dashboard | Next.js 16, React 19, Tailwind CSS 4, shadcn/ui |
-| Streaming | HLS (HTTP Live Streaming) |
-| Media Processing | ffmpeg (transcoding, segmenting) |
-| YouTube Import | yt-dlp |
-| Containerization | Docker, Docker Compose |
-
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
