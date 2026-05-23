@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type Track struct {
 	OriginalArtist string    `json:"original_artist,omitempty"`
 	OriginalAlbum  string    `json:"original_album,omitempty"`
 	OriginalGenre  string    `json:"original_genre,omitempty"`
+	MtimeUnix      int64     `json:"-"`
 }
 
 // Scanner manages the in-memory track list and background scanning.
@@ -196,11 +198,30 @@ func (s *Scanner) applyOverridesLocked(tracks []*Track) {
 	}
 }
 
-// Scan walks all configured directories and updates the track list.
-func (s *Scanner) Scan(ctx context.Context) error {
-	var found []*Track
-	now := time.Now().UTC()
+type scanEntry struct {
+	path  string
+	mtime int64
+}
 
+// Scan walks all configured directories and updates the track list.
+// Files whose mtime matches the cached value are reused without re-probing;
+// new or changed files are probed with ffprobe in parallel.
+func (s *Scanner) Scan(ctx context.Context) error {
+	// Snapshot in-memory tracks for incremental matching (path → track).
+	s.mu.RLock()
+	existing := make(map[string]*Track, len(s.tracks))
+	for _, t := range s.tracks {
+		existing[t.Path] = t
+	}
+	s.mu.RUnlock()
+
+	var (
+		found    []*Track
+		toProbe  []scanEntry
+		now      = time.Now().UTC()
+	)
+
+	// Pass 1: walk — collect cache hits immediately, queue the rest for probing.
 	for _, dir := range s.scanDirs {
 		dir = filepath.Clean(dir)
 		if abs, err := filepath.Abs(dir); err == nil {
@@ -230,17 +251,54 @@ func (s *Scanner) Scan(ctx context.Context) error {
 				return nil
 			}
 
-			t, err := probeTrack(ctx, path, now)
+			info, err := d.Info()
 			if err != nil {
-				slog.Warn("library: probe failed", "path", path, "err", err)
+				slog.Warn("library: stat failed", "path", path, "err", err)
 				return nil
 			}
-			found = append(found, t)
+			mtime := info.ModTime().Unix()
+
+			if cached, ok := existing[path]; ok && cached.MtimeUnix == mtime {
+				found = append(found, cached)
+				return nil
+			}
+			toProbe = append(toProbe, scanEntry{path, mtime})
 			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("library: scan %q: %w", dir, err)
 		}
+	}
+
+	// Pass 2: probe new/changed files in parallel.
+	cachedCount := len(found)
+	if len(toProbe) > 0 {
+		workers := runtime.NumCPU()
+		sem := make(chan struct{}, workers)
+		var (
+			wg sync.WaitGroup
+			mu sync.Mutex
+		)
+		for _, e := range toProbe {
+			wg.Add(1)
+			go func(e scanEntry) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				probeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				t, err := probeTrack(probeCtx, e.path, e.mtime, now)
+				cancel()
+				if err != nil {
+					slog.Warn("library: probe failed", "path", e.path, "err", err)
+					return
+				}
+				mu.Lock()
+				found = append(found, t)
+				mu.Unlock()
+			}(e)
+		}
+		wg.Wait()
 	}
 
 	if err := s.persist(found); err != nil {
@@ -252,7 +310,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	s.applyOverridesLocked(found)
 	s.mu.Unlock()
 
-	slog.Info("library: scan complete", "tracks", len(found))
+	slog.Info("library: scan complete", "tracks", len(found), "cached", cachedCount, "probed", len(found)-cachedCount)
 	return nil
 }
 
@@ -271,11 +329,12 @@ func (s *Scanner) persist(tracks []*Track) error {
 	}
 	for _, t := range tracks {
 		if _, err := tx.Exec(`
-			INSERT INTO tracks (id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO tracks (id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at, mtime_unix)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.ID, t.Path, t.Title, t.Artist, t.Album, t.Genre,
 			t.DurationMs, t.Bitrate, t.SizeBytes, t.Folder,
 			t.AddedAt.UTC().Format(time.RFC3339),
+			t.MtimeUnix,
 		); err != nil {
 			slog.Warn("library: persist insert", "path", t.Path, "err", err)
 		}
@@ -285,7 +344,7 @@ func (s *Scanner) persist(tracks []*Track) error {
 
 func (s *Scanner) load() error {
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at
+		SELECT id, path, title, artist, album, genre, duration_ms, bitrate_kbps, size_bytes, folder, added_at, mtime_unix
 		FROM tracks`)
 	if err != nil {
 		return err
@@ -298,7 +357,7 @@ func (s *Scanner) load() error {
 		var addedAt string
 		if err := rows.Scan(
 			&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre,
-			&t.DurationMs, &t.Bitrate, &t.SizeBytes, &t.Folder, &addedAt,
+			&t.DurationMs, &t.Bitrate, &t.SizeBytes, &t.Folder, &addedAt, &t.MtimeUnix,
 		); err != nil {
 			return err
 		}
@@ -332,7 +391,7 @@ type ffprobeOutput struct {
 	} `json:"format"`
 }
 
-func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, error) {
+func probeTrack(ctx context.Context, path string, mtime int64, addedAt time.Time) (*Track, error) {
 	// #nosec G204 — args are a fixed list; path is already cleaned and validated.
 	cmd := exec.CommandContext(ctx,
 		"ffprobe",
@@ -381,6 +440,7 @@ func probeTrack(ctx context.Context, path string, addedAt time.Time) (*Track, er
 		SizeBytes:  size,
 		Folder:     filepath.Dir(path),
 		AddedAt:    addedAt,
+		MtimeUnix:  mtime,
 	}, nil
 }
 
