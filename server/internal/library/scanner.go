@@ -393,16 +393,22 @@ type ffprobeOutput struct {
 
 func probeTrack(ctx context.Context, path string, mtime int64, addedAt time.Time) (*Track, error) {
 	// #nosec G204 — args are a fixed list; path is already cleaned and validated.
+	var stderr strings.Builder
 	cmd := exec.CommandContext(ctx,
 		"ffprobe",
-		"-v", "quiet",
+		"-v", "error",
 		"-print_format", "json",
 		"-show_format",
 		path,
 	)
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("ffprobe: %w", err)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return nil, fmt.Errorf("ffprobe: %w", err)
+		}
+		return nil, fmt.Errorf("ffprobe: %w: %s", err, msg)
 	}
 
 	var probe ffprobeOutput
