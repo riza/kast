@@ -13,6 +13,7 @@ import {
 import {
   Plus, ListMusic, Trash2, Search, Check, Play, GripVertical,
   Loader2, CheckCircle2, XCircle,
+  ChevronRight, ChevronDown, Folder, FolderOpen, Minus, Music,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -85,9 +86,16 @@ function applySessionsToPlaylists(playlists: Playlist[], sessions: APIAutoDJSess
   })
 }
 
-// ── Add Tracks Dialog ──
+// ── Folder tree helpers ──
 
-/** Strip the longest common directory prefix so folder labels are relative. */
+type FolderNode = {
+  name: string
+  fullPath: string
+  children: FolderNode[]
+  directTracks: Track[]
+  allTracks: Track[]   // recursive
+}
+
 function folderPrefix(folders: string[]): string {
   if (folders.length === 0) return ""
   let prefix = folders[0]
@@ -101,60 +109,213 @@ function folderPrefix(folders: string[]): string {
   return prefix
 }
 
+function buildFolderTree(tracks: Track[]): FolderNode[] {
+  if (tracks.length === 0) return []
+
+  const folders = Array.from(new Set(tracks.map((t) => t.folder).filter(Boolean)))
+  const prefix  = folderPrefix(folders)
+
+  const nodes = new Map<string, FolderNode>()
+  const roots: FolderNode[] = []
+
+  const getOrCreate = (relPath: string, absPath: string): FolderNode => {
+    if (nodes.has(relPath)) return nodes.get(relPath)!
+    const name = relPath.split("/").pop() || relPath
+    const node: FolderNode = { name, fullPath: absPath, children: [], directTracks: [], allTracks: [] }
+    nodes.set(relPath, node)
+    const parentRel = relPath.lastIndexOf("/") > 0 ? relPath.slice(0, relPath.lastIndexOf("/")) : ""
+    if (parentRel) {
+      const parentAbs = absPath.slice(0, absPath.lastIndexOf("/"))
+      getOrCreate(parentRel, parentAbs).children.push(node)
+    } else {
+      roots.push(node)
+    }
+    return node
+  }
+
+  for (const track of tracks) {
+    if (!track.folder) continue
+    const rel = (prefix && track.folder.startsWith(prefix + "/"))
+      ? track.folder.slice(prefix.length + 1)
+      : track.folder
+    if (!rel) continue
+    getOrCreate(rel, track.folder).directTracks.push(track)
+  }
+
+  const computeAll = (node: FolderNode): Track[] => {
+    node.allTracks = [...node.directTracks]
+    for (const c of node.children) node.allTracks.push(...computeAll(c))
+    return node.allTracks
+  }
+  const sortNode = (node: FolderNode) => {
+    node.children.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    node.directTracks.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }))
+    node.children.forEach(sortNode)
+  }
+
+  roots.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+  roots.forEach(computeAll)
+  roots.forEach(sortNode)
+  return roots
+}
+
+// ── Tree row components ──
+
+function TrackLeaf({ track, selected, onToggle, depth }: {
+  track: Track; selected: boolean; onToggle: () => void; depth: number
+}) {
+  return (
+    <div
+      onClick={onToggle}
+      className="flex items-center gap-2 py-1.5 pr-3 cursor-pointer hover:bg-white/[0.025] transition-colors"
+      style={{ paddingLeft: `${depth * 16 + 8}px` }}
+    >
+      <div className="h-4 w-4 shrink-0" /> {/* align with folder expand btn */}
+      <div className={cn(
+        "flex h-4 w-4 shrink-0 items-center justify-center border",
+        selected ? "border-k-500 bg-k-500" : "border-ink-700",
+      )}>
+        {selected && <Check className="h-2.5 w-2.5 text-white" />}
+      </div>
+      <Music className="h-3 w-3 text-ink-700 shrink-0" />
+      <div className="min-w-0 flex-1 flex items-baseline gap-2">
+        <span className="text-[12.5px] text-ink-200 truncate">{track.title}</span>
+        <span className="text-[11px] text-ink-600 truncate max-w-[100px] shrink-0">{track.artist}</span>
+      </div>
+      <span className="font-mono text-[11px] text-ink-600 shrink-0">{track.duration}</span>
+    </div>
+  )
+}
+
+function FolderRow({ node, selected, expanded, onToggleExpand, onToggleFolder, onToggleTrack, depth }: {
+  node: FolderNode
+  selected: Set<string>; expanded: Set<string>
+  onToggleExpand: (p: string) => void
+  onToggleFolder: (n: FolderNode) => void
+  onToggleTrack:  (p: string) => void
+  depth: number
+}) {
+  const isExpanded = expanded.has(node.fullPath)
+  const selCount   = node.allTracks.filter((t) => selected.has(t.path)).length
+  const checkState = selCount === 0 ? "none" : selCount === node.allTracks.length ? "all" : "some"
+
+  return (
+    <>
+      <div
+        className="flex items-center gap-2 py-1.5 pr-3 hover:bg-white/[0.025] transition-colors"
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+      >
+        {/* Expand toggle */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleExpand(node.fullPath) }}
+          className="h-4 w-4 shrink-0 flex items-center justify-center text-ink-600 hover:text-ink-400 transition-colors"
+        >
+          {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </button>
+
+        {/* Tri-state checkbox */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFolder(node) }}
+          className={cn(
+            "flex h-4 w-4 shrink-0 items-center justify-center border transition-colors",
+            checkState === "all"  ? "border-k-500 bg-k-500" :
+            checkState === "some" ? "border-k-500/60 bg-k-500/20" :
+            "border-ink-700",
+          )}
+        >
+          {checkState === "all"  && <Check className="h-2.5 w-2.5 text-white" />}
+          {checkState === "some" && <Minus className="h-2.5 w-2.5 text-k-400" />}
+        </button>
+
+        {/* Folder icon + name + count — click expands */}
+        <button
+          onClick={() => onToggleExpand(node.fullPath)}
+          className="flex items-center gap-2 min-w-0 flex-1"
+        >
+          {isExpanded
+            ? <FolderOpen className="h-3.5 w-3.5 text-ink-500 shrink-0" />
+            : <Folder     className="h-3.5 w-3.5 text-ink-600 shrink-0" />
+          }
+          <span className="text-[13px] text-ink-100 font-medium truncate text-left flex-1">{node.name}</span>
+          <span className="font-mono text-[11px] text-ink-600 shrink-0">{node.allTracks.length}</span>
+        </button>
+      </div>
+
+      {isExpanded && (
+        <>
+          {node.children.map((child) => (
+            <FolderRow key={child.fullPath} node={child}
+              selected={selected} expanded={expanded}
+              onToggleExpand={onToggleExpand}
+              onToggleFolder={onToggleFolder}
+              onToggleTrack={onToggleTrack}
+              depth={depth + 1}
+            />
+          ))}
+          {node.directTracks.map((track) => (
+            <TrackLeaf key={track.path} track={track}
+              selected={selected.has(track.path)}
+              onToggle={() => onToggleTrack(track.path)}
+              depth={depth + 1}
+            />
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+
+// ── Add Tracks Dialog ──
+
 function AddTracksDialog({ open, onOpenChange, library, existingPaths, onAdd }: {
   open: boolean; onOpenChange: (v: boolean) => void
   library: Track[]; existingPaths: string[]; onAdd: (paths: string[]) => void
 }) {
-  const [search, setSearch]           = React.useState("")
-  const [selected, setSelected]       = React.useState<Set<string>>(new Set())
-  const [activeFolder, setActiveFolder] = React.useState<string | null>(null)
+  const [search, setSearch]   = React.useState("")
+  const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set())
 
   const available = React.useMemo(
     () => library.filter((t) => !existingPaths.includes(t.path)),
     [library, existingPaths],
   )
 
-  // Build sorted folder list + common prefix for display names
-  const { folders, prefix } = React.useMemo(() => {
-    const unique = Array.from(new Set(available.map((t) => t.folder).filter(Boolean))).sort()
-    return { folders: unique, prefix: folderPrefix(unique) }
-  }, [available])
+  const tree = React.useMemo(() => buildFolderTree(available), [available])
 
-  const displayName = (folder: string) => {
-    const rel = prefix ? folder.slice(prefix.length).replace(/^\//, "") : folder
-    return rel || folder.split("/").pop() || folder
-  }
+  // Expand top-level folders when tree is first built
+  React.useEffect(() => {
+    setExpanded(new Set(tree.map((n) => n.fullPath)))
+  }, [tree])
 
-  const folderCountMap = React.useMemo(() => {
-    const m: Record<string, number> = {}
-    available.forEach((t) => { if (t.folder) m[t.folder] = (m[t.folder] ?? 0) + 1 })
-    return m
-  }, [available])
-
-  const folderTracks = React.useMemo(
-    () => activeFolder === null ? available : available.filter((t) => t.folder === activeFolder),
-    [available, activeFolder],
-  )
-
-  const visibleTracks = React.useMemo(() => {
+  // Flat search results (null = no search active)
+  const searchResult = React.useMemo(() => {
+    if (!search) return null
     const q = search.toLowerCase()
-    return q === "" ? folderTracks
-      : folderTracks.filter((t) =>
-          [t.title, t.artist, t.album].some((f) => f.toLowerCase().includes(q))
-        )
-  }, [folderTracks, search])
+    return available.filter((t) =>
+      [t.title, t.artist, t.album].some((f) => f.toLowerCase().includes(q))
+    )
+  }, [available, search])
 
-  const allVisibleSelected = visibleTracks.length > 0 && visibleTracks.every((t) => selected.has(t.path))
-
-  const toggle = (path: string) =>
+  const toggleTrack  = (path: string) =>
     setSelected((prev) => { const n = new Set(prev); n.has(path) ? n.delete(path) : n.add(path); return n })
 
-  const toggleAllVisible = () =>
+  const toggleFolder = (node: FolderNode) =>
     setSelected((prev) => {
       const n = new Set(prev)
-      allVisibleSelected
-        ? visibleTracks.forEach((t) => n.delete(t.path))
-        : visibleTracks.forEach((t) => n.add(t.path))
+      const allSel = node.allTracks.every((t) => n.has(t.path))
+      allSel ? node.allTracks.forEach((t) => n.delete(t.path)) : node.allTracks.forEach((t) => n.add(t.path))
+      return n
+    })
+
+  const toggleExpand = (path: string) =>
+    setExpanded((prev) => { const n = new Set(prev); n.has(path) ? n.delete(path) : n.add(path); return n })
+
+  const searchAllSel  = !!searchResult && searchResult.length > 0 && searchResult.every((t) => selected.has(t.path))
+  const toggleSearchAll = () =>
+    setSelected((prev) => {
+      if (!searchResult) return prev
+      const n = new Set(prev)
+      searchAllSel ? searchResult.forEach((t) => n.delete(t.path)) : searchResult.forEach((t) => n.add(t.path))
       return n
     })
 
@@ -163,12 +324,11 @@ function AddTracksDialog({ open, onOpenChange, library, existingPaths, onAdd }: 
     onAdd(paths); setSelected(new Set()); setSearch(""); onOpenChange(false)
     toast.success(`${paths.length} track${paths.length !== 1 ? "s" : ""} added`)
   }
-
   const handleClose = () => { setSelected(new Set()); setSearch(""); onOpenChange(false) }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
-      <DialogContent className="sm:max-w-2xl p-0 gap-0 bg-ink-900 border-ink-800 flex flex-col overflow-hidden max-h-[80vh]">
+      <DialogContent className="sm:max-w-xl p-0 gap-0 bg-ink-900 border-ink-800 flex flex-col overflow-hidden max-h-[82vh]">
 
         {/* Header */}
         <DialogHeader className="shrink-0 px-5 pt-5 pb-4 border-b border-ink-800">
@@ -176,107 +336,75 @@ function AddTracksDialog({ open, onOpenChange, library, existingPaths, onAdd }: 
           <DialogDescription className="text-ink-500">
             {selected.size > 0
               ? `${selected.size} track${selected.size !== 1 ? "s" : ""} selected`
-              : "Browse by folder or search across your library."}
+              : "Select folders or individual tracks to add."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Body: folder rail + track list */}
-        <div className="flex flex-1 min-h-0">
-
-          {/* Folder rail */}
-          <div className="w-44 shrink-0 border-r border-ink-800 overflow-y-auto py-1">
-            <button
-              onClick={() => setActiveFolder(null)}
-              className={cn(
-                "w-full px-3 py-2 text-left text-[12.5px] transition-colors",
-                activeFolder === null
-                  ? "bg-ink-800 text-ink-100 font-medium"
-                  : "text-ink-400 hover:text-ink-200 hover:bg-ink-800/50",
-              )}
-            >
-              <span className="flex items-center justify-between gap-1">
-                <span className="truncate">All tracks</span>
-                <span className="font-mono text-[11px] text-ink-600 shrink-0">{available.length}</span>
-              </span>
-            </button>
-            {folders.map((folder) => (
-              <button
-                key={folder}
-                onClick={() => setActiveFolder(folder)}
-                className={cn(
-                  "w-full px-3 py-2 text-left text-[12.5px] transition-colors",
-                  activeFolder === folder
-                    ? "bg-ink-800 text-ink-100 font-medium"
-                    : "text-ink-400 hover:text-ink-200 hover:bg-ink-800/50",
-                )}
-              >
-                <span className="flex items-center justify-between gap-1">
-                  <span className="truncate" title={displayName(folder)}>{displayName(folder)}</span>
-                  <span className="font-mono text-[11px] text-ink-600 shrink-0">{folderCountMap[folder] ?? 0}</span>
-                </span>
-              </button>
-            ))}
+        {/* Search bar */}
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-ink-800">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 h-3.5 w-3.5" />
+            <input
+              className="h-8 w-full bg-ink-950 border border-ink-800 pl-8 pr-3 text-[12px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+              placeholder="Search tracks…"
+              value={search} onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
-
-          {/* Track list */}
-          <div className="flex flex-1 min-w-0 flex-col">
-
-            {/* Search + select-all bar */}
-            <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-ink-800">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 h-3.5 w-3.5" />
-                <input
-                  className="h-8 w-full bg-ink-950 border border-ink-800 pl-8 pr-3 text-[12px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
-                  placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)}
-                />
+          {searchResult && searchResult.length > 0 && (
+            <button
+              onClick={toggleSearchAll}
+              className="flex items-center gap-1.5 shrink-0 text-[12px] text-ink-400 hover:text-ink-200 transition-colors"
+            >
+              <div className={cn(
+                "flex h-4 w-4 shrink-0 items-center justify-center border",
+                searchAllSel ? "border-k-500 bg-k-500" : "border-ink-700",
+              )}>
+                {searchAllSel && <Check className="h-2.5 w-2.5 text-white" />}
               </div>
-              {visibleTracks.length > 0 && (
-                <button
-                  onClick={toggleAllVisible}
-                  className="flex items-center gap-1.5 shrink-0 text-[12px] text-ink-400 hover:text-ink-200 transition-colors"
+              <span>All</span>
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          {library.length === 0 ? (
+            <p className="py-8 text-center text-[12px] text-ink-500">Library is empty. Scan from the Library page first.</p>
+          ) : searchResult !== null ? (
+            searchResult.length === 0 ? (
+              <p className="py-8 text-center text-[12px] text-ink-500">No tracks found</p>
+            ) : (
+              searchResult.map((track) => (
+                <div key={track.path} onClick={() => toggleTrack(track.path)}
+                  className="flex items-center gap-3 px-3 py-2.5 border-b border-ink-800/60 last:border-0 cursor-pointer hover:bg-white/[0.025] transition-colors"
                 >
                   <div className={cn(
                     "flex h-4 w-4 shrink-0 items-center justify-center border",
-                    allVisibleSelected ? "border-k-500 bg-k-500" : "border-ink-700",
+                    selected.has(track.path) ? "border-k-500 bg-k-500" : "border-ink-700",
                   )}>
-                    {allVisibleSelected && <Check className="h-2.5 w-2.5 text-white" />}
+                    {selected.has(track.path) && <Check className="h-2.5 w-2.5 text-white" />}
                   </div>
-                  <span>All</span>
-                </button>
-              )}
-            </div>
-
-            {/* Scrollable track rows */}
-            <div className="flex-1 overflow-y-auto">
-              {library.length === 0 ? (
-                <p className="py-8 text-center text-[12px] text-ink-500">Library is empty. Scan from the Library page first.</p>
-              ) : visibleTracks.length === 0 ? (
-                <p className="py-8 text-center text-[12px] text-ink-500">No tracks available</p>
-              ) : (
-                visibleTracks.map((track) => {
-                  const isSel = selected.has(track.path)
-                  return (
-                    <div key={track.path}
-                      onClick={() => toggle(track.path)}
-                      className="flex items-center gap-3 px-3 py-2.5 border-b border-ink-800/60 last:border-0 cursor-pointer hover:bg-white/[0.025] transition-colors"
-                    >
-                      <div className={cn(
-                        "flex h-4 w-4 shrink-0 items-center justify-center border",
-                        isSel ? "border-k-500 bg-k-500" : "border-ink-700",
-                      )}>
-                        {isSel && <Check className="h-2.5 w-2.5 text-white" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[12.5px] text-ink-100 truncate font-medium">{track.title}</p>
-                        <p className="text-[11px] text-ink-500 truncate">{track.artist}</p>
-                      </div>
-                      <span className="text-[11px] text-ink-500 font-mono shrink-0">{track.duration}</span>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[12.5px] text-ink-100 truncate font-medium">{track.title}</p>
+                    <p className="text-[11px] text-ink-500 truncate">{track.artist}</p>
+                  </div>
+                  <span className="text-[11px] text-ink-500 font-mono shrink-0">{track.duration}</span>
+                </div>
+              ))
+            )
+          ) : tree.length === 0 ? (
+            <p className="py-8 text-center text-[12px] text-ink-500">No tracks available</p>
+          ) : (
+            tree.map((node) => (
+              <FolderRow key={node.fullPath} node={node}
+                selected={selected} expanded={expanded}
+                onToggleExpand={toggleExpand}
+                onToggleFolder={toggleFolder}
+                onToggleTrack={toggleTrack}
+                depth={0}
+              />
+            ))
+          )}
         </div>
 
         {/* Footer */}
