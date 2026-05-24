@@ -27,7 +27,7 @@ type PlayMode = "sequential" | "shuffle"
 
 type Track = {
   path: string; title: string; artist: string; album: string
-  genre: string; duration: string; durationSec: number
+  genre: string; duration: string; durationSec: number; folder: string
 }
 
 type Playlist = {
@@ -61,6 +61,7 @@ function adaptApiTrack(t: APITrack): Track {
     genre: t.genre || "",
     duration: formatMs(t.duration_ms),
     durationSec: Math.round(t.duration_ms / 1000),
+    folder: t.folder || "",
   }
 }
 
@@ -86,84 +87,207 @@ function applySessionsToPlaylists(playlists: Playlist[], sessions: APIAutoDJSess
 
 // ── Add Tracks Dialog ──
 
+/** Strip the longest common directory prefix so folder labels are relative. */
+function folderPrefix(folders: string[]): string {
+  if (folders.length === 0) return ""
+  let prefix = folders[0]
+  for (const f of folders.slice(1)) {
+    while (f !== prefix && !f.startsWith(prefix + "/")) {
+      const idx = prefix.lastIndexOf("/")
+      if (idx <= 0) return ""
+      prefix = prefix.slice(0, idx)
+    }
+  }
+  return prefix
+}
+
 function AddTracksDialog({ open, onOpenChange, library, existingPaths, onAdd }: {
   open: boolean; onOpenChange: (v: boolean) => void
   library: Track[]; existingPaths: string[]; onAdd: (paths: string[]) => void
 }) {
-  const [search, setSearch]     = React.useState("")
-  const [selected, setSelected] = React.useState<string[]>([])
+  const [search, setSearch]           = React.useState("")
+  const [selected, setSelected]       = React.useState<Set<string>>(new Set())
+  const [activeFolder, setActiveFolder] = React.useState<string | null>(null)
 
-  const available = library.filter((t) =>
-    !existingPaths.includes(t.path) &&
-    (search === "" || [t.title, t.artist, t.album].some((f) => f.toLowerCase().includes(search.toLowerCase())))
+  const available = React.useMemo(
+    () => library.filter((t) => !existingPaths.includes(t.path)),
+    [library, existingPaths],
   )
 
-  const toggle = (path: string) =>
-    setSelected((prev) => prev.includes(path) ? prev.filter((x) => x !== path) : [...prev, path])
+  // Build sorted folder list + common prefix for display names
+  const { folders, prefix } = React.useMemo(() => {
+    const unique = Array.from(new Set(available.map((t) => t.folder).filter(Boolean))).sort()
+    return { folders: unique, prefix: folderPrefix(unique) }
+  }, [available])
 
-  const handleAdd = () => {
-    onAdd(selected); setSelected([]); setSearch(""); onOpenChange(false)
-    toast.success(`${selected.length} track${selected.length !== 1 ? "s" : ""} added`)
+  const displayName = (folder: string) => {
+    const rel = prefix ? folder.slice(prefix.length).replace(/^\//, "") : folder
+    return rel || folder.split("/").pop() || folder
   }
 
+  const folderCountMap = React.useMemo(() => {
+    const m: Record<string, number> = {}
+    available.forEach((t) => { if (t.folder) m[t.folder] = (m[t.folder] ?? 0) + 1 })
+    return m
+  }, [available])
+
+  const folderTracks = React.useMemo(
+    () => activeFolder === null ? available : available.filter((t) => t.folder === activeFolder),
+    [available, activeFolder],
+  )
+
+  const visibleTracks = React.useMemo(() => {
+    const q = search.toLowerCase()
+    return q === "" ? folderTracks
+      : folderTracks.filter((t) =>
+          [t.title, t.artist, t.album].some((f) => f.toLowerCase().includes(q))
+        )
+  }, [folderTracks, search])
+
+  const allVisibleSelected = visibleTracks.length > 0 && visibleTracks.every((t) => selected.has(t.path))
+
+  const toggle = (path: string) =>
+    setSelected((prev) => { const n = new Set(prev); n.has(path) ? n.delete(path) : n.add(path); return n })
+
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const n = new Set(prev)
+      allVisibleSelected
+        ? visibleTracks.forEach((t) => n.delete(t.path))
+        : visibleTracks.forEach((t) => n.add(t.path))
+      return n
+    })
+
+  const handleAdd = () => {
+    const paths = Array.from(selected)
+    onAdd(paths); setSelected(new Set()); setSearch(""); onOpenChange(false)
+    toast.success(`${paths.length} track${paths.length !== 1 ? "s" : ""} added`)
+  }
+
+  const handleClose = () => { setSelected(new Set()); setSearch(""); onOpenChange(false) }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg bg-ink-900 border-ink-800">
-        <DialogHeader>
+    <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
+      <DialogContent className="sm:max-w-2xl p-0 gap-0 bg-ink-900 border-ink-800 flex flex-col overflow-hidden max-h-[80vh]">
+
+        {/* Header */}
+        <DialogHeader className="shrink-0 px-5 pt-5 pb-4 border-b border-ink-800">
           <DialogTitle className="text-ink-100">Add Tracks</DialogTitle>
-          <DialogDescription className="text-ink-500">Select tracks from your library to add.</DialogDescription>
+          <DialogDescription className="text-ink-500">
+            {selected.size > 0
+              ? `${selected.size} track${selected.size !== 1 ? "s" : ""} selected`
+              : "Browse by folder or search across your library."}
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 h-3.5 w-3.5" />
-          <input
-            className="h-8 w-full bg-ink-950 border border-ink-800 pl-8 pr-3 text-[12px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
-            placeholder="Search tracks…" value={search} onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+        {/* Body: folder rail + track list */}
+        <div className="flex flex-1 min-h-0">
 
-        <div className="max-h-72 overflow-y-auto border border-ink-800">
-          {library.length === 0 ? (
-            <p className="py-6 text-center text-[12px] text-ink-500">Library is empty. Scan from the Library page first.</p>
-          ) : available.length === 0 ? (
-            <p className="py-6 text-center text-[12px] text-ink-500">No tracks available</p>
-          ) : (
-            available.map((track) => {
-              const isSel = selected.includes(track.path)
-              return (
-                <div key={track.path}
-                  className="kast-row flex items-center gap-3 px-3 py-2.5 border-b border-ink-800/60 last:border-0 cursor-pointer"
-                  onClick={() => toggle(track.path)}
+          {/* Folder rail */}
+          <div className="w-44 shrink-0 border-r border-ink-800 overflow-y-auto py-1">
+            <button
+              onClick={() => setActiveFolder(null)}
+              className={cn(
+                "w-full px-3 py-2 text-left text-[12.5px] transition-colors",
+                activeFolder === null
+                  ? "bg-ink-800 text-ink-100 font-medium"
+                  : "text-ink-400 hover:text-ink-200 hover:bg-ink-800/50",
+              )}
+            >
+              <span className="flex items-center justify-between gap-1">
+                <span className="truncate">All tracks</span>
+                <span className="font-mono text-[11px] text-ink-600 shrink-0">{available.length}</span>
+              </span>
+            </button>
+            {folders.map((folder) => (
+              <button
+                key={folder}
+                onClick={() => setActiveFolder(folder)}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-[12.5px] transition-colors",
+                  activeFolder === folder
+                    ? "bg-ink-800 text-ink-100 font-medium"
+                    : "text-ink-400 hover:text-ink-200 hover:bg-ink-800/50",
+                )}
+              >
+                <span className="flex items-center justify-between gap-1">
+                  <span className="truncate" title={displayName(folder)}>{displayName(folder)}</span>
+                  <span className="font-mono text-[11px] text-ink-600 shrink-0">{folderCountMap[folder] ?? 0}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Track list */}
+          <div className="flex flex-1 min-w-0 flex-col">
+
+            {/* Search + select-all bar */}
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-ink-800">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-500 h-3.5 w-3.5" />
+                <input
+                  className="h-8 w-full bg-ink-950 border border-ink-800 pl-8 pr-3 text-[12px] text-ink-100 placeholder:text-ink-600 focus:border-k-500/50 focus:outline-none"
+                  placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              {visibleTracks.length > 0 && (
+                <button
+                  onClick={toggleAllVisible}
+                  className="flex items-center gap-1.5 shrink-0 text-[12px] text-ink-400 hover:text-ink-200 transition-colors"
                 >
                   <div className={cn(
                     "flex h-4 w-4 shrink-0 items-center justify-center border",
-                    isSel ? "border-k-500 bg-k-500" : "border-ink-700"
+                    allVisibleSelected ? "border-k-500 bg-k-500" : "border-ink-700",
                   )}>
-                    {isSel && <Check className="h-2.5 w-2.5 text-white" />}
+                    {allVisibleSelected && <Check className="h-2.5 w-2.5 text-white" />}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[12.5px] text-ink-100 truncate font-medium">{track.title}</p>
-                    <p className="text-[11px] text-ink-500">{track.artist}</p>
-                  </div>
-                  <span className="text-[11px] text-ink-500 font-mono shrink-0">{track.duration}</span>
-                </div>
-              )
-            })
-          )}
+                  <span>All</span>
+                </button>
+              )}
+            </div>
+
+            {/* Scrollable track rows */}
+            <div className="flex-1 overflow-y-auto">
+              {library.length === 0 ? (
+                <p className="py-8 text-center text-[12px] text-ink-500">Library is empty. Scan from the Library page first.</p>
+              ) : visibleTracks.length === 0 ? (
+                <p className="py-8 text-center text-[12px] text-ink-500">No tracks available</p>
+              ) : (
+                visibleTracks.map((track) => {
+                  const isSel = selected.has(track.path)
+                  return (
+                    <div key={track.path}
+                      onClick={() => toggle(track.path)}
+                      className="flex items-center gap-3 px-3 py-2.5 border-b border-ink-800/60 last:border-0 cursor-pointer hover:bg-white/[0.025] transition-colors"
+                    >
+                      <div className={cn(
+                        "flex h-4 w-4 shrink-0 items-center justify-center border",
+                        isSel ? "border-k-500 bg-k-500" : "border-ink-700",
+                      )}>
+                        {isSel && <Check className="h-2.5 w-2.5 text-white" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12.5px] text-ink-100 truncate font-medium">{track.title}</p>
+                        <p className="text-[11px] text-ink-500 truncate">{track.artist}</p>
+                      </div>
+                      <span className="text-[11px] text-ink-500 font-mono shrink-0">{track.duration}</span>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
         </div>
 
-        {selected.length > 0 && (
-          <p className="text-[12px] text-ink-500">{selected.length} selected</p>
-        )}
-
-        <DialogFooter>
-          <button onClick={() => { setSelected([]); onOpenChange(false) }}
+        {/* Footer */}
+        <DialogFooter className="shrink-0 px-5 py-4 border-t border-ink-800">
+          <button onClick={handleClose}
             className="h-9 px-4 border border-ink-800 hover:bg-ink-800 text-[13px] text-ink-200 transition-colors">
             Cancel
           </button>
-          <button onClick={handleAdd} disabled={selected.length === 0}
+          <button onClick={handleAdd} disabled={selected.size === 0}
             className="h-9 px-4 bg-k-500 hover:bg-k-400 disabled:opacity-50 text-white text-[13px] font-semibold transition-colors">
-            Add {selected.length > 0 ? `(${selected.length})` : ""}
+            Add {selected.size > 0 ? `(${selected.size})` : ""}
           </button>
         </DialogFooter>
       </DialogContent>
