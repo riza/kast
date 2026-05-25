@@ -365,6 +365,8 @@ export default function ListenRTCPage({ params }: { params: Promise<{ mount: str
     setPlaying(false)
 
     const audio = audioRef.current
+    // Unlock autoplay while still in the user-gesture call stack
+    audio.play().catch(() => {})
     const onPlay  = () => { setPlaying(true); setRtcStatus("connected") }
     const onPause = () => setPlaying(false)
     audio.addEventListener("playing", onPlay)
@@ -390,7 +392,8 @@ export default function ListenRTCPage({ params }: { params: Promise<{ mount: str
         const s = pc.iceConnectionState
         if (s === "connected" || s === "completed") {
           setRtcStatus("connected")
-        } else if (s === "failed" || s === "closed" || s === "disconnected") {
+        } else if (s === "failed" || s === "closed") {
+          // "disconnected" is transient — ICE may recover; only fail on terminal states
           setRtcStatus("error"); setPlaying(false)
         }
       }
