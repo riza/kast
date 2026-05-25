@@ -306,11 +306,12 @@ export type UpdateAPIKeyBody = {
 }
 
 export type APIListener = {
-  ip:           string
-  mount:        string
-  last_seen:    string
-  country_code: string
-  user_agent:   string
+  ip:            string
+  mount:         string
+  last_seen:     string
+  connected_at?: string
+  country_code:  string
+  user_agent:    string
 }
 
 export type APIWebhook = {

@@ -11,7 +11,14 @@ const POLL_INTERVAL = 5_000
 // ── Helpers ──
 
 function isPrivate(ip: string): boolean {
-  return /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1$|^fd|^fc)/.test(ip)
+  const s = ip.toLowerCase()
+  if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)/.test(s)) return true
+  if (s === "::1") return true
+  if (/^fe[89ab][0-9a-f]:/.test(s)) return true   // link-local fe80::/10
+  if (/^f[cd][0-9a-f]{2}:/.test(s)) return true   // ULA fc00::/7
+  const mapped = s.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mapped) return isPrivate(mapped[1])
+  return false
 }
 
 function countryFlag(code: string): string {
@@ -32,6 +39,15 @@ function timeAgo(iso: string): string {
   if (diff < 5)  return "just now"
   if (diff < 60) return `${diff}s ago`
   return `${Math.floor(diff / 60)}m ago`
+}
+
+function fmtListeningDuration(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (diff < 60) return `${diff}s`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`
+  const h = Math.floor(diff / 3600)
+  const m = Math.floor((diff % 3600) / 60)
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
 function parseUA(ua: string): string {
@@ -57,7 +73,9 @@ function parseUA(ua: string): string {
 
 function ListenerRow({ entry, mountNames }: { entry: APIListener; mountNames: Map<string, string> }) {
   const mountLabel = mountNames.get(entry.mount) ?? entry.mount
-  const ago        = timeAgo(entry.last_seen)
+  const since      = entry.connected_at
+    ? fmtListeningDuration(entry.connected_at)
+    : timeAgo(entry.last_seen)
 
   const location = isPrivate(entry.ip)
     ? <span className="text-ink-500">Local</span>
@@ -72,14 +90,14 @@ function ListenerRow({ entry, mountNames }: { entry: APIListener; mountNames: Ma
 
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_90px_minmax(0,1fr)_72px] gap-3 px-1 py-3 items-center border-b border-ink-800/60 last:border-0">
-      <span className="font-mono text-[13px] text-ink-100 truncate">{entry.ip}</span>
+      <span className="font-mono text-[13px] text-ink-100 truncate" title={entry.ip}>{entry.ip}</span>
       <span className="text-[12.5px] font-mono truncate">{location}</span>
       <span
         className="font-mono text-[11.5px] text-ink-400 truncate"
         title={entry.user_agent || undefined}
       >{client}</span>
       <span className="font-mono text-[12.5px] text-k-400 truncate">{mountLabel}</span>
-      <span className="text-right text-[11.5px] text-ink-500 font-mono">{ago}</span>
+      <span className="text-right text-[11.5px] text-ink-500 font-mono">{since}</span>
     </div>
   )
 }
@@ -244,7 +262,7 @@ export default function ListenersPage() {
             <div>Location</div>
             <div>Client</div>
             <div>Mount</div>
-            <div className="text-right">Seen</div>
+            <div className="text-right">Since</div>
           </div>
           {filtered.map((l, i) => (
             <ListenerRow key={`${l.ip}-${l.mount}-${i}`} entry={l} mountNames={mountNames} />

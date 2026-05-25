@@ -173,7 +173,37 @@ function CreateMountDialog({ onCreated }: { onCreated: (m: Mount) => void }) {
   )
 }
 
+// ── Sparkline ──
+
+function Sparkline({ data }: { data: number[] }) {
+  const w = 100, h = 24, pad = 2
+  const hasSignal = data.some((v) => v > 0)
+  if (data.length < 2) {
+    return (
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-6">
+        <line x1={pad} y1={h / 2} x2={w - pad} y2={h / 2} stroke="var(--color-ink-700, #3a3a40)" strokeWidth="1" />
+      </svg>
+    )
+  }
+  const max = Math.max(...data, 1)
+  const min = Math.min(...data, 0)
+  const range = max - min || 1
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * (w - pad * 2) + pad
+    const y = h - pad - ((v - min) / range) * (h - pad * 2)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const color = hasSignal ? "#fb7314" : "var(--color-ink-700, #3a3a40)"
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-6">
+      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // ── Page ──
+
+const POLL_INTERVAL = 5_000
 
 export default function MountsPage() {
   const router = useRouter()
@@ -182,12 +212,28 @@ export default function MountsPage() {
   const [loading, setLoading]           = React.useState(true)
   const [search, setSearch]             = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<"all" | "live" | "idle">("all")
+  const [mountHistory, setMountHistory] = React.useState<Record<string, number[]>>({})
 
   React.useEffect(() => {
-    api.mounts.list()
-      .then((ms) => setMounts(ms.map(adaptApiMount)))
-      .catch((err) => toast.error(`Failed to load mounts: ${err.message}`))
-      .finally(() => setLoading(false))
+    const load = () =>
+      api.mounts.list()
+        .then((ms) => {
+          const adapted = ms.map(adaptApiMount)
+          setMounts(adapted)
+          setMountHistory((prev) => {
+            const next = { ...prev }
+            for (const m of adapted) {
+              const hist = next[m.id] ?? []
+              next[m.id] = [...hist.slice(-19), m.listeners]
+            }
+            return next
+          })
+        })
+        .catch((err) => toast.error(`Failed to load mounts: ${err.message}`))
+        .finally(() => setLoading(false))
+    load()
+    const id = setInterval(load, POLL_INTERVAL)
+    return () => clearInterval(id)
   }, [])
 
   const filtered = mounts.filter((m) => {
@@ -281,9 +327,7 @@ export default function MountsPage() {
               <span className="text-[12px] font-mono text-ink-300">
                 {[mount.codec, mount.bitrate].filter(Boolean).join(" · ") || "—"}
               </span>
-              <svg viewBox="0 0 100 24" preserveAspectRatio="none" className="w-full h-6">
-                <path d="M0,18 L10,16 L20,17 L30,14 L40,12 L50,13 L60,10 L70,8 L80,6 L90,5 L100,4" fill="none" stroke="#fb7314" strokeWidth="1.2"/>
-              </svg>
+              <Sparkline data={mountHistory[mount.id] ?? [mount.listeners]} />
               <span className="text-right text-[12.5px] font-mono text-ink-100">{mount.listeners}</span>
               <div className="row-actions flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
                 <KBtn title="Copy HLS URL" onClick={() => {

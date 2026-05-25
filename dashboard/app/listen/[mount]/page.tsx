@@ -62,6 +62,27 @@ function fmtTime(ms: number) {
   return `${m}:${r.toString().padStart(2, "0")}`
 }
 
+function seededShuffle<T>(arr: T[], seed: string): T[] {
+  // Simple mulberry32-based seeded Fisher-Yates
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = (Math.imul(h, 16777619) >>> 0)
+  }
+  const rand = () => {
+    h += 0x6d2b79f5
+    let t = Math.imul(h ^ (h >>> 15), 1 | h)
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const out = [...arr]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
 function cx(...a: (string | false | null | undefined)[]) {
   return a.filter(Boolean).join(" ")
 }
@@ -471,11 +492,25 @@ function HistoryPanel({ tracks }: { tracks: HistoryTrack[] }) {
   )
 }
 
+// ── Shuffle icon ───────────────────────────────────────────────────────────
+
+const Shuffle = mkIcon(
+  <><polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" /><polyline points="21 16 21 21 16 21" /><line x1="15" y1="15" x2="21" y2="21" /></>
+)
+
 // ── Playlist panel ─────────────────────────────────────────────────────────
 
 function PlaylistPanel({ playlist }: { playlist: PlaylistInfo | null }) {
-  const upcoming = playlist?.tracks.slice(0, 5) ?? []
-  if (!playlist || upcoming.length === 0) return (
+  const isShuffled = playlist?.mode === "shuffle"
+  const tracks = React.useMemo(() => {
+    if (!playlist?.tracks.length) return []
+    const base = isShuffled
+      ? seededShuffle(playlist.tracks, playlist.name)
+      : playlist.tracks
+    return base.slice(0, 5)
+  }, [playlist?.tracks, playlist?.name, isShuffled])
+
+  if (!playlist || tracks.length === 0) return (
     <section>
       <SectionHead label="Up Next" />
       <p className="mt-5 text-[13px] font-mono" style={{ color: "var(--pl-fg-3)" }}>No active playlist.</p>
@@ -483,13 +518,26 @@ function PlaylistPanel({ playlist }: { playlist: PlaylistInfo | null }) {
   )
   return (
     <section>
-      <SectionHead label="Up Next" />
+      <div className="flex items-baseline gap-3">
+        <h2 className="font-mono text-[11px] tracking-[0.2em] uppercase shrink-0" style={{ color: "var(--pl-fg-3)" }}>
+          Up Next
+        </h2>
+        {isShuffled && (
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] tracking-[0.15em] uppercase shrink-0" style={{ color: "var(--pl-accent)" }}>
+            <Shuffle size={10} />
+            Shuffle
+          </span>
+        )}
+        <div className="flex-1 h-px" style={{ background: "var(--pl-line)" }} />
+      </div>
       <ul className="mt-5 divide-y" style={{ borderColor: "var(--pl-line)" }}>
-        {upcoming.map((t, i) => {
+        {tracks.map((t, i) => {
           const [c1, c2] = strColor(t.title + t.artist)
           return (
             <li key={i} className="flex items-center gap-3 py-2.5">
-              <div className="font-mono text-[11px] tabular-nums w-5 shrink-0 text-right" style={{ color: "var(--pl-fg-3)" }}>{i + 1}</div>
+              <div className="font-mono text-[11px] tabular-nums w-5 shrink-0 text-right" style={{ color: "var(--pl-fg-3)" }}>
+                {isShuffled ? "·" : i + 1}
+              </div>
               <div className="w-8 h-8 shrink-0 rounded-full" style={{ background: `linear-gradient(135deg, ${c1} 0%, ${c2} 100%)` }} />
               <div className="min-w-0 flex-1">
                 <div className="text-[13px] truncate">{t.title}</div>

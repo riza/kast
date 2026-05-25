@@ -343,9 +343,32 @@ export default function ListenRTCPage({ params }: { params: Promise<{ mount: str
 
   // ── WebRTC ───────────────────────────────────────────────────────────────
 
+  const stopWebRTC = React.useCallback(() => {
+    pcRef.current?.close()
+    pcRef.current = null
+    if (audioRef.current) {
+      audioRef.current.srcObject = null
+      audioRef.current.pause()
+    }
+    setPlaying(false)
+    setRtcStatus("idle")
+  }, [])
+
   const startWebRTC = React.useCallback(async () => {
     if (!serverBase || !audioRef.current) return
+
+    // Clean up any stale connection from a previous attempt
+    pcRef.current?.close()
+    pcRef.current = null
+
     setRtcStatus("connecting")
+    setPlaying(false)
+
+    const audio = audioRef.current
+    const onPlay  = () => { setPlaying(true); setRtcStatus("connected") }
+    const onPause = () => setPlaying(false)
+    audio.addEventListener("playing", onPlay)
+    audio.addEventListener("pause",   onPause)
 
     try {
       const pc = new RTCPeerConnection({
@@ -357,15 +380,17 @@ export default function ListenRTCPage({ params }: { params: Promise<{ mount: str
 
       pc.ontrack = (e) => {
         if (!audioRef.current) return
-        audioRef.current.srcObject = e.streams[0]
+        // Some WHEP servers don't attach streams to the track event
+        const stream = e.streams[0] ?? new MediaStream([e.track])
+        audioRef.current.srcObject = stream
         audioRef.current.play().catch(() => {})
       }
 
       pc.oniceconnectionstatechange = () => {
         const s = pc.iceConnectionState
         if (s === "connected" || s === "completed") {
-          setRtcStatus("connected"); setPlaying(true)
-        } else if (s === "failed" || s === "closed") {
+          setRtcStatus("connected")
+        } else if (s === "failed" || s === "closed" || s === "disconnected") {
           setRtcStatus("error"); setPlaying(false)
         }
       }
@@ -395,18 +420,12 @@ export default function ListenRTCPage({ params }: { params: Promise<{ mount: str
       await pc.setRemoteDescription({ type: "answer", sdp: answerSDP })
     } catch (err) {
       console.error("WebRTC error:", err)
+      audio.removeEventListener("playing", onPlay)
+      audio.removeEventListener("pause",   onPause)
       setRtcStatus("error")
       setPlaying(false)
     }
   }, [serverBase, mount])
-
-  const stopWebRTC = React.useCallback(() => {
-    pcRef.current?.close()
-    pcRef.current = null
-    if (audioRef.current) { audioRef.current.srcObject = null }
-    setPlaying(false)
-    setRtcStatus("idle")
-  }, [])
 
   const handlePlayToggle = () => {
     if (playing || rtcStatus === "connecting" || rtcStatus === "connected") {
