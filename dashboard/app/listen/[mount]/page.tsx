@@ -501,7 +501,7 @@ const Shuffle = mkIcon(
 // ── Playlist panel ─────────────────────────────────────────────────────────
 
 function PlaylistPanel({ playlist }: { playlist: PlaylistInfo | null }) {
-  const isShuffled = playlist?.mode === "shuffle"
+  const isShuffled = playlist?.mode !== "sequential"
   const tracks = React.useMemo(() => {
     if (!playlist?.tracks.length) return []
     const base = isShuffled
