@@ -56,11 +56,11 @@ jobs:
         run: npm run test:e2e
 
       - name: Upload results to Qualflare
-        # Forked-repo pull_request runs never get repository secrets (GitHub
-        # withholds them regardless of the secret being configured on the
-        # base repo) — skip reporting rather than fail the job when there's
-        # no token to use. Same-repo pushes/PRs still report normally.
-        if: always() && env.QUALFLARE_TOKEN != ''
+        # Only report from pushes to the head branch, never PRs — PR runs
+        # (fork or not) are more noise than signal for this, and fork PRs
+        # never get repository secrets anyway (GitHub withholds them
+        # regardless of the secret being configured on the base repo).
+        if: always() && github.event_name == 'push' && env.QUALFLARE_TOKEN != ''
         uses: Qualflare/qualflare-action@v1
         env:
           QF_ENVIRONMENT: staging

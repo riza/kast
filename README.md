@@ -2,6 +2,10 @@
 
 A lightweight, self-hosted internet radio streaming server. Drop in audio files, create playlists, and broadcast HLS streams — no complex setup required.
 
+[![Qualflare](https://api.qualflare.com/p/kast/badge.svg)](https://reports.qualflare.com/p/kast/launches)
+
+[![Qualflare](https://api.qualflare.com/p/kast/banner.svg)](https://reports.qualflare.com/p/kast/launches)
+
 <!-- TODO: Uncomment when public repo is ready
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
